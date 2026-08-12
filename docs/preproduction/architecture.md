@@ -58,6 +58,7 @@ main
     ├── stateful world props (for example RuneAltar)
     ├── world-owned feature controllers
     │   ├── Archive heliograph, observability ring, and beam lifecycle
+    │   ├── Falls rune ritual, waterfall opening, and chest lifecycle
     │   ├── Grid Hanoi puzzle, session snapshot, and visual lifecycle
     │   └── Grid Pong court, Thunder reliquary, pointer input, and match lifecycle
     └── math (lazy from the game)
@@ -94,6 +95,15 @@ relay bearings, observability pulse/log cascade, routed beams, player interrupti
 spell disruption, and optical collapse fragments. The Archive Event Horizon branch
 still supplies its active collapse frame and coordinates that local reaction with
 planet, atlas, and data-glass behavior.
+The Falls rune controller owns the six movable crystal clusters, socket placement and
+sequence state, shattering and trace-driven repair, rune effects, cave seal, central
+waterfall opening, hidden chest, and chest burst. It registers crystal bodies and
+shards with the shared `Kickable` runtime through a host port; fish consume a narrow
+mutable shard lease without learning the rest of the ritual model. Spell and chest
+progression remain composition-root decisions. `PortfolioGame` also retains Falls
+water traversal, fish schooling, the monument, terrain and camera behavior, and the
+Falls Event Horizon branch, forwarding only the active collapse frame to the ritual's
+local water-panel and crystal reaction.
 `SurfaceSelection` is the first extracted physics seam: it selects active, descending,
 and grounded surfaces in one reusable scan rather than allocating and sorting candidate
 arrays in the frame loop. `TerminalCommands` similarly owns canonical commands and

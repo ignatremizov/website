@@ -34,6 +34,7 @@ src/
 └── game/                          Lazy Three.js runtime
     ├── PortfolioGame.ts           Renderer and game composition root
     ├── InputController.ts         Keyboard and movement-input lifecycle
+    ├── Kickable.ts                Shared lightweight-physics prop record
     ├── *Rules/selection/raycast   Focused deterministic gameplay helpers
     ├── *Effect/*Sequence          Stateful bounded visual controllers
     ├── scenePrimitives.ts         Shared primitive construction
@@ -42,6 +43,8 @@ src/
     ├── zones/                     Stateful controllers grouped by owning world
     │   ├── archive/
     │   │   └── ArchiveSignalPuzzle.ts  Heliograph and observability lifecycle
+    │   ├── falls/
+    │   │   └── FallsRuneRitual.ts Rune puzzle, waterfall, and chest lifecycle
     │   └── grid/
     │       ├── HanoiPuzzle.ts     Checksum puzzle, snapshot, and visual lifecycle
     │       └── PongChallenge.ts   Court, reliquary, input, and match lifecycle
@@ -86,7 +89,7 @@ PortfolioGame
 
 Focused modules under `src/game/` own reusable rules, effects, props, and sequences. A stateful controller should accept the smallest useful context or callbacks and expose a narrow lifecycle such as `update`, `setQuality`, `reactToSpell`, `reset`, or `dispose`. A pure calculation should avoid Three.js when plain numeric inputs are enough. Do not move a one-line coordinate or material adjustment into a new abstraction; extract a coherent behavior.
 
-`src/game/zones/` contains substantial world-owned controllers. A controller owns its feature state, geometry construction, interactions, animation, transient snapshot, and dynamic-object enumeration together. `PortfolioGame` supplies shared engine services through a narrow host context and decides when zone-level events run. In particular, `WorldCollapseSequence` owns the common Event Horizon envelope while `PortfolioGame` retains per-zone dispatch; a feature controller may expose its own destruction reaction without replacing that world-specific coordination.
+`src/game/zones/` contains substantial world-owned controllers. A controller owns its feature state, geometry construction, interactions, animation, transient snapshot, and dynamic-object enumeration together. `PortfolioGame` supplies shared engine services through a narrow host context and decides when zone-level events run. Shared runtime records such as `Kickable` live above zone modules so the composition root never depends on a zone-specific physics type. In particular, `WorldCollapseSequence` owns the common Event Horizon envelope while `PortfolioGame` retains per-zone dispatch; a feature controller may expose its own destruction reaction without replacing that world-specific coordination.
 
 `src/game/math/` is a hard lazy-loading boundary. `MightymaticaZone.ts` composes the room, and each substantial exhibit belongs in its own module. Exhibits receive shared engine services through `MightymaticaZoneContext`; they must not import `PortfolioGame`, `main.ts`, or shell modules. Do not statically import a math exhibit from code in the eager shell or main game chunk.
 
