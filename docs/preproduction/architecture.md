@@ -59,6 +59,7 @@ main
     ├── stateful world props (for example RuneAltar)
     ├── world-owned feature controllers
     │   ├── Archive heliograph, observability ring, and beam lifecycle
+    │   ├── Field void-turtle ride, orbiters, and cargo lifecycle
     │   ├── Falls rune ritual, waterfall opening, and chest lifecycle
     │   ├── Grid Hanoi puzzle, session snapshot, and visual lifecycle
     │   └── Grid Pong court, Thunder reliquary, pointer input, and match lifecycle
@@ -105,6 +106,12 @@ progression remain composition-root decisions. `PortfolioGame` also retains Fall
 water traversal, fish schooling, the monument, terrain and camera behavior, and the
 Falls Event Horizon branch, forwarding only the active collapse frame to the ritual's
 local water-panel and crystal reaction.
+The Field turtle controller owns the turtle geometry, wake state, ride state machine,
+comet and meteor effects, collected-stone session state, and temporary portable-prop
+orbits. Shared player position, surface ownership, heading, shadow projection,
+telekinesis release, and `Kickable` registration cross a narrow host port. The Field
+Event Horizon branch remains in `PortfolioGame` and explicitly invokes only the
+turtle's local fin and moon-orbit reaction.
 `SurfaceSelection` is the first extracted physics seam: it selects active, descending,
 and grounded surfaces in one reusable scan rather than allocating and sorting candidate
 arrays in the frame loop. `TerminalCommands` similarly owns canonical commands and
