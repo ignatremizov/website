@@ -13,6 +13,10 @@ import {
 import type { Kickable } from "./Kickable";
 import { PencilTeleportRitual } from "./PencilTeleportRitual";
 import {
+  PortalNetwork,
+  type PortalHandle,
+} from "./PortalNetwork";
+import {
   sampleIgnitionPanic,
   type IgnitionPanicFrame,
 } from "./PlayerIgnitionPanic";
@@ -309,56 +313,6 @@ interface CompassEquipFlight extends AttachmentEquipFlight {
   announce: boolean;
 }
 
-interface PortalState {
-  position: THREE.Vector3;
-  core: THREE.Object3D;
-  destination: ZoneId;
-  milestones: PortalMilestoneDisplay | null;
-  action: () => void | Promise<void>;
-  dwell: number;
-  announced: boolean;
-  triggered: boolean;
-  chargeMode?: "pulse" | "collapse";
-  lockMessage?: string;
-}
-
-interface PortalMilestoneDisplay {
-  progressZone: ZoneId;
-  fragmentZone: ZoneId;
-  root: THREE.Group;
-  facets: THREE.InstancedMesh<
-    THREE.OctahedronGeometry,
-    THREE.MeshBasicMaterial
-  >;
-  cores: THREE.InstancedMesh<
-    THREE.OctahedronGeometry,
-    THREE.MeshBasicMaterial
-  >;
-  completionCircuit: THREE.Mesh<
-    THREE.TorusGeometry,
-    THREE.MeshBasicMaterial
-  >;
-  fragmentSign: THREE.Mesh<
-    THREE.PlaneGeometry,
-    THREE.MeshBasicMaterial
-  >;
-  dummy: THREE.Object3D;
-  growth: Float32Array;
-  colors: THREE.Color[];
-  colorScratch: THREE.Color;
-  total: number;
-  targetUnlocked: number;
-  completion: number;
-  orbiting: boolean;
-  phase: number;
-}
-
-interface PortalMilestoneOptions {
-  progressZone: ZoneId;
-  fragmentZone?: ZoneId;
-  orbiting: boolean;
-}
-
 type AsteroidShadow = THREE.Mesh<
   THREE.CircleGeometry,
   THREE.MeshBasicMaterial
@@ -380,7 +334,7 @@ interface TravelingAsteroidState {
 interface AtlasAutopilotState {
   destination: ZoneId;
   nextZone: ZoneId;
-  portal: PortalState;
+  portal: PortalHandle;
   path: THREE.Vector3[];
   waypointIndex: number;
   previousDistance: number;
@@ -746,32 +700,6 @@ const palette = {
   water: 0x25aabd,
 };
 
-const zoneMilestoneColors: Readonly<Record<ZoneId, readonly number[]>> = {
-  field: [palette.amber, palette.green],
-  falls: [palette.green, palette.cyan, palette.violet, palette.amber],
-  grid: [palette.cyan, palette.coral, palette.violet, palette.amber],
-  archive: [palette.violet, palette.cyan, palette.amber, palette.green],
-  math: [
-    palette.amber,
-    palette.violet,
-    palette.cyan,
-    palette.green,
-    palette.coral,
-  ],
-};
-
-const zoneCollapseCommandFragments: Readonly<
-  Record<ZoneId, { order: string; command: string }>
-> = {
-  // SUDO is the hub-level completion unlock rather than a portal fragment.
-  field: { order: "01", command: "SUDO" },
-  falls: { order: "02", command: "COLLAPSE" },
-  grid: { order: "03", command: "WORLD" },
-  archive: { order: "04", command: "--EVENT-HORIZON" },
-  math: { order: "05", command: "--ARM" },
-};
-const portalDormantMilestoneShade = new THREE.Color(0x172227);
-
 const up = new THREE.Vector3(0, 1, 0);
 const avatarPitchAxis = new THREE.Vector3(1, 0, 0);
 const avatarLongAxis = new THREE.Vector3(0, 1, 0);
@@ -843,32 +771,6 @@ function getCompassHeading(yaw: number): CompassHeading {
       Math.round(normalized / (Math.PI / 4)) % compassHeadings.length
     ] ?? "N"
   );
-}
-
-function createPortalMilestoneCrystalGeometry(
-  radius: number,
-): THREE.OctahedronGeometry {
-  const geometry = new THREE.OctahedronGeometry(radius, 0);
-  const normals = geometry.getAttribute("normal");
-  const faceShades = new Float32Array(normals.count * 3);
-  for (let vertex = 0; vertex < normals.count; vertex += 1) {
-    const shade = THREE.MathUtils.clamp(
-      0.76 +
-        normals.getY(vertex) * 0.16 +
-        normals.getX(vertex) * 0.07 -
-        normals.getZ(vertex) * 0.05,
-      0.58,
-      1,
-    );
-    faceShades[vertex * 3] = shade;
-    faceShades[vertex * 3 + 1] = shade;
-    faceShades[vertex * 3 + 2] = shade;
-  }
-  geometry.setAttribute(
-    "color",
-    new THREE.BufferAttribute(faceShades, 3),
-  );
-  return geometry;
 }
 
 const archiveAtlasX = -2;
@@ -1022,7 +924,6 @@ export class PortfolioGame {
   private readonly fieldRockClusters: FieldRockClusterState[] = [];
   private lastFieldRockDebugRefresh = 0;
   private readonly kickables: Kickable[] = [];
-  private readonly portalStates: PortalState[] = [];
   private readonly telescopeRigs: TelescopeRig[] = [];
   private readonly orbitingPlanets: OrbitingPlanet[] = [];
   private readonly lanterns: LanternState[] = [];
@@ -1152,6 +1053,7 @@ export class PortfolioGame {
   private readonly pongChallenge: PongChallenge;
   private readonly archiveSignalPuzzle: ArchiveSignalPuzzle;
   private readonly fallsRuneRitual: FallsRuneRitual;
+  private readonly portalNetwork: PortalNetwork;
   private pongRoguePacketLease: PongRoguePacketLease | null = null;
   private archiveAtlas: ArchiveAtlasState | null = null;
   private archiveDataGlass: ArchiveDataGlassState | null = null;
@@ -1196,7 +1098,6 @@ export class PortfolioGame {
   private externalInputEnabled = true;
   private transitioning = false;
   private preferReducedMotion = false;
-  private portalArrivalGuardUntil = 0;
   private noclip = false;
   private collisionDebugEnabled = false;
   private speedMultiplier = 1;
@@ -1286,6 +1187,36 @@ export class PortfolioGame {
   constructor(canvas: HTMLCanvasElement, hooks: GameHooks) {
     this.canvas = canvas;
     this.hooks = hooks;
+    this.portalNetwork = new PortalNetwork({
+      materials: this.materials,
+      colors: palette,
+      addInteraction: (id, label, x, z, radius, action) => {
+        this.addInteraction(id, label, x, z, radius, action);
+      },
+      addAnimatedItem: (item) => {
+        this.animatedItems.push(item);
+      },
+      addLanternReveal: (reveal) => {
+        this.lanternReveals.push(reveal);
+      },
+      runWorldAction: (action, failureMessage, onFailure) => {
+        this.runWorldAction(action, failureMessage, onFailure);
+      },
+      travelTo: (destination) => this.teleport(destination, true),
+      onStatus: (message, options) => {
+        this.hooks.onStatus(message, options);
+      },
+      getCurrentZone: () => this.currentZone,
+      getPlayerPosition: () => this.playerPosition,
+      getZoneMilestoneProgress: (zone) =>
+        this.hooks.getZoneMilestoneProgress(zone),
+      getElapsed: () => this.elapsed,
+      isInputEnabled: () => this.externalInputEnabled,
+      isTransitioning: () => this.transitioning,
+      isPlayerLocked: () => this.isIgnitionPanicActive(),
+      isWorldCollapseActive: () => this.worldCollapse !== null,
+      isReducedMotion: () => this.reduceMotion,
+    });
     this.hanoiPuzzle = new HanoiPuzzle({
       materials: this.materials,
       colors: palette,
@@ -1773,6 +1704,10 @@ export class PortfolioGame {
     return this.quality;
   }
 
+  refreshPortalMilestones(): void {
+    this.portalNetwork.refreshMilestones();
+  }
+
   isNoclipEnabled(): boolean {
     return this.noclip;
   }
@@ -1817,7 +1752,7 @@ export class PortfolioGame {
     this.interactions.length = 0;
     this.pointerActions.length = 0;
     this.mathInstanceDrags.length = 0;
-    this.portalArrivalGuardUntil = Number.POSITIVE_INFINITY;
+    this.portalNetwork.suspendThresholds();
     this.worldCollapseCollisionReleased = false;
     this.worldCollapseFarewellSent = false;
     this.worldCollapseAchievementSent = false;
@@ -3273,8 +3208,7 @@ export class PortfolioGame {
     this.hanoiPuzzle.update(delta, this.elapsed);
     this.mightymaticaZone?.update(delta, this.elapsed);
     this.legacySimulationCube?.rematerialization?.update(delta, this.elapsed);
-    this.updatePortals(delta);
-    this.updatePortalMilestones(delta);
+    this.portalNetwork.update(delta);
     this.updateTelescopeRigs(delta);
     this.updateOrbitingPlanets(delta);
     this.updateWanderingNpcs(delta);
@@ -5837,9 +5771,7 @@ export class PortfolioGame {
       this.atlasAutopilot = null;
       return false;
     }
-    const portal = this.portalStates.find(
-      (candidate) => candidate.destination === nextZone,
-    );
+    const portal = this.portalNetwork.findByDestination(nextZone);
     if (!portal) {
       this.atlasAutopilot = null;
       this.hooks.onStatus(
@@ -6144,9 +6076,7 @@ export class PortfolioGame {
     }
     if (
       route.portal !==
-        this.portalStates.find(
-          (candidate) => candidate.destination === route.nextZone,
-        ) ||
+        this.portalNetwork.findByDestination(route.nextZone) ||
       route.path.length === 0
     ) {
       this.prepareAtlasAutopilot(route.destination);
@@ -6208,55 +6138,6 @@ export class PortfolioGame {
     route.previousDistance = distance;
     if (route.stalledFor > 1.1) {
       this.prepareAtlasAutopilot(route.destination);
-    }
-  }
-
-  private updatePortals(delta: number): void {
-    if (this.worldCollapse) return;
-    for (const portal of this.portalStates) {
-      const dx = portal.position.x - this.playerPosition.x;
-      const dz = portal.position.z - this.playerPosition.z;
-      const inside = dx * dx + dz * dz < 1.42 * 1.42;
-      if (
-        !inside ||
-        !this.externalInputEnabled ||
-        this.transitioning ||
-        this.isIgnitionPanicActive() ||
-        this.elapsed < this.portalArrivalGuardUntil
-      ) {
-        portal.dwell = 0;
-        portal.announced = false;
-        portal.triggered = false;
-        portal.core.scale.lerp(this.tempDirection.set(1, 1, 1), Math.min(1, delta * 8));
-        continue;
-      }
-
-      portal.dwell += delta;
-      const charge = Math.min(1, portal.dwell / 1.25);
-      const pulse =
-        portal.chargeMode === "collapse"
-          ? 1 - charge * 0.42 + Math.sin(this.elapsed * 9) * 0.008
-          : 1 + charge * 0.12 + Math.sin(this.elapsed * 9) * 0.015;
-      portal.core.scale.setScalar(pulse);
-      if (portal.dwell > 0.42 && !portal.announced) {
-        portal.announced = true;
-        this.hooks.onStatus(
-          portal.lockMessage ?? "Portal lock forming… remain inside to travel.",
-        );
-      }
-      if (portal.dwell >= 1.25 && !portal.triggered) {
-        portal.triggered = true;
-        this.runWorldAction(
-          portal.action,
-          "The threshold loses its lock before the route settles. Remain nearby and let it form again.",
-          () => {
-            portal.dwell = 0;
-            portal.announced = false;
-            portal.triggered = false;
-          },
-        );
-        return;
-      }
     }
   }
 
@@ -8075,21 +7956,14 @@ export class PortfolioGame {
     const traveling = this.travelingAsteroid;
     const portal =
       !traveling || this.elapsed >= traveling.portalCooldownUntil
-        ? this.portalStates.find((candidate) => {
-            const portalDx = nextX - candidate.position.x;
-            const portalDz = nextZ - candidate.position.z;
-            return (
-              portalDx * portalDx + portalDz * portalDz <
-              1.55 * 1.55
-            );
-          })
-        : undefined;
+        ? this.portalNetwork.findContaining(nextX, nextZ)
+        : null;
     if (portal) {
       const firstMisroute =
         this.currentZone === "archive" &&
         this.travelingAsteroid === null;
       this.routeTravelingAsteroid(kickable, portal.destination);
-      portal.core.scale.setScalar(1.28);
+      this.portalNetwork.pulse(portal);
       if (firstMisroute) {
         this.completeArchivePinballChallenge();
         const rewards = this.reconcileChallengeRewards();
@@ -8230,8 +8104,9 @@ export class PortfolioGame {
         arrivalAnchor.z - (arrivalAnchor.z / arrivalRadius) * inwardDistance,
       );
     }
-    this.portalArrivalGuardUntil =
-      arrivalAnchor === undefined ? 0 : this.elapsed + 0.85;
+    this.portalNetwork.guardArrivalsUntil(
+      arrivalAnchor === undefined ? 0 : this.elapsed + 0.85,
+    );
     this.scene.background = new THREE.Color(selected.sky);
     this.scene.fog = new THREE.FogExp2(selected.sky, selected.fog);
     this.ambientGrid?.setZone(zone);
@@ -8322,7 +8197,7 @@ export class PortfolioGame {
     this.compassProp = null;
     this.pencilProps.length = 0;
     this.kickables.length = 0;
-    this.portalStates.length = 0;
+    this.portalNetwork.clear();
     this.telescopeRigs.length = 0;
     this.orbitingPlanets.length = 0;
     this.playerOccluders.length = 0;
@@ -8544,7 +8419,7 @@ export class PortfolioGame {
       this.hooks.onStatus("Bearing: useful, legible, durable. The sky remains suspicious.");
     });
 
-    this.createPortal(
+    this.portalNetwork.createThreshold(
       root,
       -9.2,
       -6.8,
@@ -8552,7 +8427,7 @@ export class PortfolioGame {
       "Enter Luminous Falls",
       "falls",
     );
-    this.createPortal(
+    this.portalNetwork.createThreshold(
       root,
       10.6,
       -4.3,
@@ -8560,7 +8435,7 @@ export class PortfolioGame {
       "Enter Signal Grid",
       "grid",
     );
-    this.createPortal(
+    this.portalNetwork.createThreshold(
       root,
       0,
       10.3,
@@ -8791,7 +8666,7 @@ export class PortfolioGame {
 
     this.fallsRuneRitual.mount(root);
 
-    this.createPortal(
+    this.portalNetwork.createThreshold(
       root,
       0,
       11.2,
@@ -8909,7 +8784,7 @@ export class PortfolioGame {
       daemonControllerX,
       daemonControllerZ,
     );
-    this.createPortal(
+    this.portalNetwork.createThreshold(
       root,
       0,
       10.4,
@@ -9130,30 +9005,17 @@ export class PortfolioGame {
     }
     if (!state.portalRegistered) {
       state.portalRegistered = true;
-      const milestones = this.createPortalMilestoneDisplay(
-        state.capsule,
-        this.zoneGroup,
-        state.capsule.position.x,
-        state.capsule.position.z,
-        Math.PI / 2,
-        {
-          progressZone: "math",
-          orbiting: true,
-        },
-      );
-      this.portalStates.push({
-        position: new THREE.Vector3(
-          state.capsule.position.x,
-          0,
-          state.capsule.position.z,
-        ),
+      this.portalNetwork.registerAperture({
+        x: state.capsule.position.x,
+        z: state.capsule.position.z,
         core: state.core,
         destination: "math",
-        milestones,
+        milestoneParent: state.capsule,
+        signParent: this.zoneGroup,
+        rotation: Math.PI / 2,
+        progressZone: "math",
+        orbiting: true,
         action: () => this.teleport("math", true),
-        dwell: 0,
-        announced: false,
-        triggered: false,
         chargeMode: "collapse",
         lockMessage:
           "The reconstructed cube folds inward… remain within its core to enter Mightymatica.",
@@ -9311,39 +9173,27 @@ export class PortfolioGame {
       },
       registerReturnAperture: (x, z, core, label) => {
         const action = () => this.teleport("grid", true);
-        const milestones = this.createPortalMilestoneDisplay(
-          core,
-          this.zoneGroup,
+        this.portalNetwork.registerAperture({
           x,
           z,
-          Math.PI,
-          {
-            progressZone: "math",
-            fragmentZone: "math",
-            orbiting: true,
-          },
-        );
-        this.portalStates.push({
-          position: new THREE.Vector3(x, 0, z),
           core,
           destination: "grid",
-          milestones,
+          milestoneParent: core,
+          signParent: this.zoneGroup,
+          rotation: Math.PI,
+          progressZone: "math",
+          fragmentZone: "math",
+          orbiting: true,
           action,
-          dwell: 0,
-          announced: false,
-          triggered: false,
           chargeMode: "collapse",
           lockMessage:
             "The cube core folds inward… remain within the face to return to Signal Grid.",
+          interaction: {
+            id: "math-cube-return-aperture",
+            label,
+            radius: 2.65,
+          },
         });
-        this.addInteraction(
-          "math-cube-return-aperture",
-          label,
-          x,
-          z,
-          2.65,
-          action,
-        );
       },
       onStatus: (message, options) => {
         this.hooks.onStatus(message, options);
@@ -9479,7 +9329,7 @@ export class PortfolioGame {
       this.createFloatingAsteroid(root, x, y, z, size);
     }
 
-    this.createPortal(
+    this.portalNetwork.createThreshold(
       root,
       0,
       10.3,
@@ -9518,472 +9368,6 @@ export class PortfolioGame {
     });
     const stars = new THREE.Points(geometry, material);
     this.decorativeGroup.add(stars);
-  }
-
-  refreshPortalMilestones(): void {
-    for (const portal of this.portalStates) {
-      const display = portal.milestones;
-      if (!display) continue;
-      const progress = this.hooks.getZoneMilestoneProgress(
-        display.progressZone,
-      );
-      display.targetUnlocked = THREE.MathUtils.clamp(
-        progress.unlocked,
-        0,
-        display.total,
-      );
-    }
-  }
-
-  private createPortalFragmentSign(
-    parent: THREE.Group,
-    x: number,
-    z: number,
-    rotation: number,
-    destination: ZoneId,
-  ): THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial> {
-    const fragment = zoneCollapseCommandFragments[destination];
-    const canvas = document.createElement("canvas");
-    canvas.width = 1024;
-    canvas.height = 320;
-    const context = canvas.getContext("2d");
-    if (context) {
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      const wash = context.createLinearGradient(0, 0, canvas.width, 0);
-      wash.addColorStop(0, "rgba(255, 171, 65, 0)");
-      wash.addColorStop(0.16, "rgba(255, 171, 65, 0.13)");
-      wash.addColorStop(0.84, "rgba(98, 220, 232, 0.13)");
-      wash.addColorStop(1, "rgba(98, 220, 232, 0)");
-      context.fillStyle = wash;
-      context.fillRect(0, 42, canvas.width, canvas.height - 84);
-      context.strokeStyle = "rgba(255, 194, 96, 0.52)";
-      context.lineWidth = 5;
-      context.beginPath();
-      context.moveTo(70, 58);
-      context.lineTo(34, 160);
-      context.lineTo(70, 262);
-      context.moveTo(canvas.width - 70, 58);
-      context.lineTo(canvas.width - 34, 160);
-      context.lineTo(canvas.width - 70, 262);
-      context.stroke();
-      context.textBaseline = "middle";
-      context.textAlign = "left";
-      context.fillStyle = "#ffbd55";
-      context.font = "800 62px ui-monospace, SFMono-Regular, Menlo, monospace";
-      context.fillText(fragment.order, 94, 160);
-      context.fillStyle = "#eaffff";
-      let fontSize = 66;
-      const fontFamily =
-        "ui-monospace, SFMono-Regular, Menlo, monospace";
-      context.font = `800 ${fontSize}px ${fontFamily}`;
-      while (
-        fontSize > 42 &&
-        context.measureText(fragment.command).width > 710
-      ) {
-        fontSize -= 2;
-        context.font = `800 ${fontSize}px ${fontFamily}`;
-      }
-      context.lineWidth = 9;
-      context.strokeStyle = "rgba(3, 8, 12, 0.88)";
-      context.strokeText(fragment.command, 244, 160);
-      context.fillText(fragment.command, 244, 160);
-    }
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.name = `portal-collapse-fragment-${destination}`;
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.minFilter = THREE.LinearFilter;
-    texture.magFilter = THREE.LinearFilter;
-    texture.generateMipmaps = false;
-    const material = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      map: texture,
-      transparent: true,
-      opacity: 0,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide,
-      toneMapped: false,
-    });
-    const width = destination === "archive" ? 6.6 : 4.5;
-    const sign = new THREE.Mesh(
-      new THREE.PlaneGeometry(width, width * 0.3125),
-      material,
-    );
-    sign.name = `portal-collapse-fragment-sign-${destination}`;
-    const length = Math.max(0.001, Math.hypot(x, z));
-    const inwardX = -x / length;
-    const inwardZ = -z / length;
-    sign.position.set(
-      x + inwardX * 2.45,
-      0.17,
-      z + inwardZ * 2.45,
-    );
-    sign.rotation.set(-Math.PI / 2, 0, rotation);
-    sign.visible = false;
-    sign.renderOrder = 4;
-    parent.add(sign);
-    return sign;
-  }
-
-  private createPortalMilestoneDisplay(
-    parent: THREE.Object3D,
-    signParent: THREE.Group,
-    x: number,
-    z: number,
-    rotation: number,
-    options: PortalMilestoneOptions,
-  ): PortalMilestoneDisplay {
-    const { progressZone, orbiting } = options;
-    const fragmentZone = options.fragmentZone ?? progressZone;
-    const progress = this.hooks.getZoneMilestoneProgress(progressZone);
-    const total = Math.max(1, progress.total);
-    const root = new THREE.Group();
-    root.name = `portal-milestones-${progressZone}`;
-    if (!orbiting) root.position.set(0, 2.05, 0.34);
-    parent.add(root);
-
-    const facetGeometry = createPortalMilestoneCrystalGeometry(0.34);
-    const facetMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      vertexColors: true,
-      toneMapped: false,
-    });
-
-    const facets = new THREE.InstancedMesh(
-      facetGeometry,
-      facetMaterial,
-      total,
-    );
-    facets.name = `portal-milestone-facets-${progressZone}`;
-    facets.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    facets.frustumCulled = false;
-    facets.castShadow = false;
-    root.add(facets);
-
-    const cores = new THREE.InstancedMesh(
-      facetGeometry.clone(),
-      new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.18,
-        depthTest: false,
-        depthWrite: false,
-        side: THREE.BackSide,
-        blending: THREE.AdditiveBlending,
-        toneMapped: false,
-      }),
-      total,
-    );
-    cores.name = `portal-milestone-cores-${progressZone}`;
-    cores.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    cores.frustumCulled = false;
-    cores.renderOrder = 3;
-    root.add(cores);
-
-    const completionCircuit = new THREE.Mesh(
-      new THREE.TorusGeometry(
-        orbiting ? 1.38 : 1.86,
-        orbiting ? 0.035 : 0.052,
-        5,
-        orbiting ? 28 : 36,
-      ),
-      new THREE.MeshBasicMaterial({
-        color:
-          zoneMilestoneColors[progressZone][0] ?? palette.cyan,
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        toneMapped: false,
-      }),
-    );
-    completionCircuit.name =
-      `portal-milestone-complete-circuit-${progressZone}`;
-    if (orbiting) completionCircuit.rotation.x = Math.PI / 2;
-    completionCircuit.visible = false;
-    completionCircuit.renderOrder = 3;
-    root.add(completionCircuit);
-
-    const fragmentSign = this.createPortalFragmentSign(
-      signParent,
-      x,
-      z,
-      rotation,
-      fragmentZone,
-    );
-    const colors = Array.from(
-      { length: total },
-      (_, index) =>
-        new THREE.Color(
-          zoneMilestoneColors[progressZone][
-            index % zoneMilestoneColors[progressZone].length
-          ] ?? palette.cyan,
-        ),
-    );
-    const display: PortalMilestoneDisplay = {
-      progressZone,
-      fragmentZone,
-      root,
-      facets,
-      cores,
-      completionCircuit,
-      fragmentSign,
-      dummy: new THREE.Object3D(),
-      growth: new Float32Array(total),
-      colors,
-      colorScratch: new THREE.Color(),
-      total,
-      targetUnlocked: THREE.MathUtils.clamp(
-        progress.unlocked,
-        0,
-        total,
-      ),
-      completion: progress.unlocked >= total ? 1 : 0,
-      orbiting,
-      phase: (Math.abs(x * 0.31 + z * 0.17) % 1) * Math.PI * 2,
-    };
-    for (let index = 0; index < total; index += 1) {
-      display.growth[index] =
-        index < display.targetUnlocked ? 1 : 0;
-    }
-    this.lanternReveals.push({
-      mesh: fragmentSign,
-      range: 8.4,
-      isAvailable: () => {
-        const fragmentProgress =
-          this.hooks.getZoneMilestoneProgress(fragmentZone);
-        return (
-          fragmentProgress.total > 0 &&
-          fragmentProgress.unlocked >= fragmentProgress.total
-        );
-      },
-    });
-    this.updatePortalMilestoneDisplay(display, 0, true);
-    return display;
-  }
-
-  private updatePortalMilestoneDisplay(
-    display: PortalMilestoneDisplay,
-    delta: number,
-    immediate = false,
-  ): void {
-    const follow =
-      immediate || this.reduceMotion
-        ? 1
-        : 1 - Math.exp(-delta * 5.6);
-    for (let index = 0; index < display.total; index += 1) {
-      const target = index < display.targetUnlocked ? 1 : 0;
-      const growth = THREE.MathUtils.lerp(
-        display.growth[index] ?? 0,
-        target,
-        follow,
-      );
-      display.growth[index] = growth;
-      const color = display.colorScratch
-        .copy(display.colors[index] ?? display.colors[0]!)
-        .lerp(portalDormantMilestoneShade, (1 - growth) * 0.46);
-      display.facets.setColorAt(index, color);
-      display.cores.setColorAt(index, color);
-
-      const dummy = display.dummy;
-      if (display.orbiting) {
-        const angle =
-          display.phase +
-          (index / display.total) * Math.PI * 2 +
-          this.elapsed * (0.16 + index * 0.018);
-        const radius = 1.48 + (index % 2) * 0.32;
-        dummy.position.set(
-          Math.cos(angle) * radius,
-          Math.sin(angle * 1.7 + display.phase) * 0.46,
-          Math.sin(angle) * radius,
-        );
-        dummy.rotation.set(
-          angle * 0.42 + index,
-          -angle * 0.68,
-          angle + index * 0.4,
-        );
-      } else {
-        const angle =
-          display.total === 1
-            ? Math.PI / 2
-            : THREE.MathUtils.lerp(
-                -Math.PI * 0.08,
-                Math.PI * 1.08,
-                index / (display.total - 1),
-              );
-        dummy.position.set(
-          Math.cos(angle) * 1.86,
-          Math.sin(angle) * 1.86,
-          0,
-        );
-        dummy.rotation.set(0, 0, angle - Math.PI / 2);
-      }
-      const seedScale = 0.42 + growth * 0.58;
-      const shardHeight = 1.32 + (index % 3) * 0.15;
-      dummy.scale.set(
-        0.78 * seedScale,
-        shardHeight * seedScale,
-        0.78 * seedScale,
-      );
-      dummy.updateMatrix();
-      display.facets.setMatrixAt(index, dummy.matrix);
-
-      dummy.scale.set(
-        0.88 * seedScale,
-        shardHeight * 1.1 * seedScale,
-        0.88 * seedScale,
-      );
-      dummy.updateMatrix();
-      display.cores.setMatrixAt(index, dummy.matrix);
-    }
-    display.facets.instanceMatrix.needsUpdate = true;
-    display.cores.instanceMatrix.needsUpdate = true;
-    if (display.facets.instanceColor) {
-      display.facets.instanceColor.needsUpdate = true;
-    }
-    if (display.cores.instanceColor) {
-      display.cores.instanceColor.needsUpdate = true;
-    }
-
-    const completeTarget =
-      display.targetUnlocked >= display.total ? 1 : 0;
-    display.completion = THREE.MathUtils.lerp(
-      display.completion,
-      completeTarget,
-      immediate || this.reduceMotion
-        ? 1
-        : 1 - Math.exp(-delta * 3.2),
-    );
-    display.completionCircuit.visible = display.completion > 0.005;
-    display.completionCircuit.material.opacity =
-      display.completion *
-      (0.68 + Math.sin(this.elapsed * 2.8 + display.phase) * 0.12);
-    display.completionCircuit.scale.setScalar(
-      1 + display.completion * Math.sin(this.elapsed * 1.9) * 0.018,
-    );
-  }
-
-  private updatePortalMilestones(delta: number): void {
-    for (const portal of this.portalStates) {
-      if (!portal.milestones) continue;
-      this.updatePortalMilestoneDisplay(portal.milestones, delta);
-    }
-  }
-
-  private createPortal(
-    parent: THREE.Group,
-    x: number,
-    z: number,
-    color: number,
-    label: string,
-    destination: ZoneId,
-  ): void {
-    const action = () => this.teleport(destination, true);
-    const group = new THREE.Group();
-    group.name = `portal-to-${destination}`;
-    group.position.set(x, 0, z);
-    // Keep every threshold tangent to the island edge, with its step facing
-    // inward. The Archive portal already looked close at 0/π; the diagonal
-    // Field portals need this radial yaw to avoid appearing offset.
-    group.rotation.y = Math.atan2(-x, -z);
-
-    const portalMaterial =
-      color === palette.green
-        ? this.materials.green
-        : color === palette.cyan
-          ? this.materials.cyan
-          : color === palette.violet
-            ? this.materials.violet
-            : this.materials.amber;
-
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(1.75, 0.36, 6, 18), this.materials.stone);
-    ring.name = `portal-stone-ring-${destination}`;
-    ring.position.y = 2.05;
-    ring.castShadow = true;
-    ring.receiveShadow = true;
-    group.add(ring);
-
-    const coreMaterial = portalMaterial.clone();
-    coreMaterial.transparent = true;
-    coreMaterial.opacity = 0.64;
-    coreMaterial.depthWrite = false;
-    coreMaterial.side = THREE.DoubleSide;
-    const core = new THREE.Mesh(new THREE.CircleGeometry(1.48, 28), coreMaterial);
-    core.position.set(0, 2.05, -0.02);
-    core.renderOrder = 0;
-    group.add(core);
-
-    const swirl = new THREE.Mesh(
-      new THREE.TorusGeometry(0.92, 0.055, 5, 24, Math.PI * 1.55),
-      this.materials.portalGlyph,
-    );
-    swirl.position.set(0, 2.05, 0);
-    swirl.rotation.z = Math.abs(x * 0.2 + z * 0.13);
-    swirl.castShadow = false;
-    swirl.renderOrder = 2;
-    group.add(swirl);
-
-    for (const side of [-1, 1]) {
-      const base = new THREE.Mesh(new THREE.BoxGeometry(0.78, 1.3, 0.9), this.materials.stone);
-      base.position.set(side * 1.42, 0.65, 0);
-      base.castShadow = true;
-      base.receiveShadow = true;
-      group.add(base);
-    }
-
-    const step = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.25, 1.6), this.materials.parchment);
-    step.position.set(0, 0.08, 0.45);
-    step.receiveShadow = true;
-    group.add(step);
-
-    parent.add(group);
-    const isReturnThreshold =
-      destination === "field" && this.currentZone !== "field";
-    const milestones = this.createPortalMilestoneDisplay(
-      group,
-      parent,
-      x,
-      z,
-      group.rotation.y,
-      {
-        progressZone: isReturnThreshold
-          ? this.currentZone
-          : destination,
-        // Both faces of a threshold teach the same world-owned fragment.
-        // Return portals therefore mirror the world being left, not Field.
-        fragmentZone: isReturnThreshold
-          ? this.currentZone
-          : destination,
-        orbiting: false,
-      },
-    );
-    this.animatedItems.push({
-      object: core,
-      originY: core.position.y,
-      phase: Math.abs(x * 0.4 + z * 0.7),
-      amplitude: 0.045,
-      rotationSpeed: 0,
-    });
-    this.animatedItems.push({
-      object: swirl,
-      originY: swirl.position.y,
-      phase: Math.abs(z * 0.3),
-      amplitude: 0,
-      rotationSpeed: 0.42,
-      rotationAxis: "z",
-    });
-    this.portalStates.push({
-      position: new THREE.Vector3(x, 0, z),
-      core,
-      destination,
-      milestones,
-      action,
-      dwell: 0,
-      announced: false,
-      triggered: false,
-    });
-    this.addInteraction(`portal-${label}`, label, x, z, 2.65, action);
   }
 
   private createTent(parent: THREE.Group, x: number, z: number): TentState {
@@ -15121,10 +14505,7 @@ export class PortfolioGame {
     this.archiveAsteroid = kickable;
     this.archiveAsteroidShadow = shadow;
     if (arriving && state.arrivalFrom) {
-      const receivingPortal = this.portalStates.find(
-        (portal) => portal.destination === state.arrivalFrom,
-      );
-      receivingPortal?.core.scale.setScalar(1.28);
+      this.portalNetwork.pulseDestination(state.arrivalFrom);
     }
     if (this.currentZone === "archive") {
       this.archiveSpaceAsteroids.push(kickable);

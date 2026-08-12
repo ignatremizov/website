@@ -54,6 +54,7 @@ main
     ├── scene-level AmbientGrid cloth, tearing, repair, and finale transforms
     ├── bounded WorldCollapseSequence phase envelopes and destruction visuals
     ├── bounded PencilTeleportRitual visual
+    ├── cross-world PortalNetwork thresholds, dwell locks, and progress displays
     ├── shared scene primitives and resource disposal
     ├── stateful world props (for example RuneAltar)
     ├── world-owned feature controllers
@@ -109,13 +110,20 @@ and grounded surfaces in one reusable scan rather than allocating and sorting ca
 arrays in the frame loop. `TerminalCommands` similarly owns canonical commands and
 aliases so parsing, completion, `which`, and `man` alias lookup resolve consistently.
 
+`PortalNetwork` is the shared Three.js navigation-prop boundary. It owns ordinary
+threshold geometry, custom cube-aperture registration, dwell state, arrival guards,
+milestone crystal growth, and lantern-revealed command-fragment signs. It exposes only
+read-only destination/position handles to atlas auto-walk and traveling-asteroid
+routing. `PortfolioGame` still owns the transition itself, arrival anchors, route
+solving, persistence callbacks, and each world's Event Horizon coordination.
+
 Every world interaction that may return a promise passes through one failure boundary.
 Synchronous throws and rejected lazy-route imports become a recoverable world status;
-portal dwell state is reset so the player can retry without reloading. Failed initial
-construction also disposes its partial scene and WebGL renderer before the shell offers
-another attempt. The shell applies its landing-page renderer fallback only to that
-initial construction boundary. A later navigation rejection leaves the existing game
-and HUD mounted so the caller can report the route failure and retry it.
+the portal controller resets its dwell state so the player can retry without reloading.
+Failed initial construction also disposes its partial scene and WebGL renderer before
+the shell offers another attempt. The shell applies its landing-page renderer fallback
+only to that initial construction boundary. A later navigation rejection leaves the
+existing game and HUD mounted so the caller can report the route failure and retry it.
 
 `AchievementLedger` owns the milestone catalog, validation, first-unlock semantics,
 and versioned local serialization; the shell only renders its snapshots.

@@ -35,6 +35,7 @@ src/
     ├── PortfolioGame.ts           Renderer and game composition root
     ├── InputController.ts         Keyboard and movement-input lifecycle
     ├── Kickable.ts                Shared lightweight-physics prop record
+    ├── PortalNetwork.ts           Cross-world thresholds and progress displays
     ├── *Rules/selection/raycast   Focused deterministic gameplay helpers
     ├── *Effect/*Sequence          Stateful bounded visual controllers
     ├── scenePrimitives.ts         Shared primitive construction
@@ -88,6 +89,8 @@ PortfolioGame
 `PortfolioGame.ts` is the Three.js composition root. It owns the renderer, frame loop, zone lifecycle, shared player/camera/collision/interaction systems, and adaptation to `GameHooks`. It may orchestrate features, but it should not own browser storage, query shell DOM, or render HTML UI. Avoid adding another large state cluster directly to this file when a mechanic has its own state, update loop, quality behavior, or disposal needs.
 
 Focused modules under `src/game/` own reusable rules, effects, props, and sequences. A stateful controller should accept the smallest useful context or callbacks and expose a narrow lifecycle such as `update`, `setQuality`, `reactToSpell`, `reset`, or `dispose`. A pure calculation should avoid Three.js when plain numeric inputs are enough. Do not move a one-line coordinate or material adjustment into a new abstraction; extract a coherent behavior.
+
+`PortalNetwork.ts` owns ordinary threshold construction, custom cube-aperture registration, dwell locking, arrival guards, milestone crystals, lantern-revealed command fragments, and the small read-only handles used by auto-walk and the traveling asteroid. `PortfolioGame` still decides when travel occurs and owns arrival placement, route solving, progression hooks, shared interactions, and per-world Event Horizon handling. Custom portals should register through `PortalNetwork`; do not mutate a second portal-state collection in a zone or exhibit.
 
 `src/game/zones/` contains substantial world-owned controllers. A controller owns its feature state, geometry construction, interactions, animation, transient snapshot, and dynamic-object enumeration together. `PortfolioGame` supplies shared engine services through a narrow host context and decides when zone-level events run. Shared runtime records such as `Kickable` live above zone modules so the composition root never depends on a zone-specific physics type. In particular, `WorldCollapseSequence` owns the common Event Horizon envelope while `PortfolioGame` retains per-zone dispatch; a feature controller may expose its own destruction reaction without replacing that world-specific coordination.
 
