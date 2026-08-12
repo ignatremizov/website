@@ -1,70 +1,1007 @@
-<!DOCTYPE html>
-<html lang="en-US">
-	<head>
-		<!-- Hi, this is my source code -->
-		<title>Ignat's site</title>
-        <meta name="Description" content="This is Ignat's personal website">
-		<meta charset="utf-8">
-		<meta http-equiv="X-UA-Compatible" content="IE=edge">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-		<meta name="author" content="Ignat">
-        <link href="stylesheets/normalize.css" media="screen, projection" rel="stylesheet" type="text/css"/>
-		<link href="stylesheets/ignat_styling.css" media="screen, projection" rel="stylesheet" type="text/css"/>
-        <script src="js/vendor/modernizr-2.8.3.min.js"></script>
-    </head>
-	<body class="fullContainer noMargin">
-		<div class="fullContainer spaceBackground">
-		    <header>
-                <nav>
-                    <ul class="niceSpacing">
-                        <li class="nav-item"><a href="./index.html">Home</a></li>
-                        <li class="nav-item"><a href="./gallery.html">Gallery</a></li>
-                        <li class="nav-item"><a href="./contact.html">Contact</a></li>
-                        <li class="nav-item"><a href="./improv-games.html">Improv Games app</a></li>
-                    </ul>
-                </nav>
-            </header>
-            <section>
-                <img src="https://goo.gl/RG3GtK" />
-                <img src="./images/main.jpg" />
-                <!-- <h1>Hello Internet!</h1>
-                <h2>Welcome to my space. 🌌🌠🌌</h2> -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <meta name="theme-color" content="#06090b" />
+    <meta
+      name="description"
+      content="Ignat Remizov is a CTO, systems builder, and creative technologist. Explore an interactive Three.js portfolio under strange skies or open the complete quick portfolio."
+    />
+    <meta property="og:title" content="Ignat Remizov · Systems Under Strange Skies" />
+    <meta
+      property="og:description"
+      content="An explorable portfolio about readable systems, serious engineering, and creative technical work."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://ignatremizov.com/" />
+    <meta property="og:image" content="./images/field-arch-hero.jpg" />
+    <link rel="canonical" href="https://ignatremizov.com/" />
+    <link rel="icon" type="image/png" sizes="64x64" href="./images/favicon-64.png" />
+    <link rel="preload" as="image" type="image/webp" href="./images/field-arch-hero.webp" />
+    <title>Ignat Remizov · Systems Under Strange Skies</title>
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Person",
+        "name": "Ignat Remizov",
+        "jobTitle": "CTO",
+        "url": "https://ignatremizov.com/",
+        "sameAs": [
+          "https://github.com/ignatremizov",
+          "https://www.linkedin.com/in/ignatremizov/",
+          "https://linktr.ee/ignatremizov"
+        ],
+        "knowsAbout": [
+          "Fintech",
+          "Payment systems",
+          "Software architecture",
+          "Compliance automation",
+          "Cloud infrastructure",
+          "Creative technology"
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#portfolio">Skip to portfolio</a>
+
+    <main id="app-shell">
+      <section id="game-stage" class="game-stage" data-state="idle" aria-label="Interactive portfolio world">
+        <canvas id="game-canvas" aria-label="Three-dimensional portfolio world" tabindex="-1">
+          Your browser does not support the canvas used by the interactive portfolio.
+        </canvas>
+
+        <div class="scene-fallback" aria-hidden="true"></div>
+        <div class="scene-vignette" aria-hidden="true"></div>
+        <div class="scene-grid" aria-hidden="true"></div>
+        <div id="void-ride-atmosphere" class="void-ride-atmosphere" hidden aria-hidden="true">
+          <span class="void-galaxy-haze"></span>
+          <span class="void-meteor void-meteor-one"></span>
+          <span class="void-meteor void-meteor-two"></span>
+          <span class="void-meteor void-meteor-three"></span>
+        </div>
+
+        <div id="transition-veil" class="transition-veil" aria-hidden="true">
+          <span class="transition-sigil"></span>
+        </div>
+
+        <header class="topbar">
+          <a class="brand" href="./index.html" aria-label="Ignat Remizov home">
+            <span class="brand-mark" aria-hidden="true">IR</span>
+            <span>
+              <strong>Ignat Remizov</strong>
+              <small>systems under strange skies</small>
+            </span>
+          </a>
+
+          <nav class="topbar-actions" aria-label="Portfolio controls">
+            <button class="icon-button" type="button" data-action="map" aria-label="Open field folio atlas">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m3 6 5-2 8 3 5-2v13l-5 2-8-3-5 2V6Z" />
+                <path d="M8 4v13M16 7v13" />
+              </svg>
+              <span>Atlas</span>
+            </button>
+            <button class="icon-button" type="button" data-action="terminal" aria-label="Open terminal">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m5 7 4 4-4 4M11 17h8" />
+              </svg>
+              <span>Terminal</span>
+            </button>
+            <a
+              class="icon-button"
+              href="#portfolio"
+              data-action="portfolio"
+              aria-label="Open quick portfolio"
+              aria-haspopup="dialog"
+              aria-controls="portfolio"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="5" width="18" height="14" rx="2" />
+                <path d="M8 5V3h8v2M3 10h18M10 14h4" />
+              </svg>
+              <span>Portfolio</span>
+            </a>
+            <button class="icon-button icon-only" type="button" data-action="help" aria-label="Open controls and help">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M9.8 9a2.4 2.4 0 1 1 3.5 2.1c-.9.5-1.3 1-1.3 1.9M12 17h.01" />
+              </svg>
+            </button>
+          </nav>
+        </header>
+
+        <div id="entry-landing" class="entry-landing">
+          <section id="entry-panel" class="entry-panel" aria-labelledby="entry-title">
+            <p class="eyebrow"><span></span> CTO · systems builder · creative technologist</p>
+            <h1 id="entry-title">Ignat Remizov</h1>
+            <p class="entry-lede">
+              I build readable systems for complex work: payments, compliance, infrastructure,
+              and the occasional strange little artifact.
+            </p>
+            <div class="entry-actions">
+              <a
+                class="button button-secondary"
+                href="#portfolio"
+                data-action="portfolio"
+                aria-haspopup="dialog"
+                aria-controls="portfolio"
+              >
+                Open quick portfolio
+              </a>
+            </div>
+            <div class="entry-meta" aria-label="Quick facts">
+              <span><small>Current</small> Executive Director &amp; CTO</span>
+              <span><small>Base</small> Limassol, Cyprus</span>
+              <span><small>Domains</small> payments · risk · cloud</span>
+            </div>
+            <p id="entry-status" class="entry-status" aria-live="polite">
+              The interactive Three.js world loads here. No install or page change.
+            </p>
+          </section>
+
+          <div class="entry-gate">
+            <button
+              id="explore-button"
+              class="explore-gate"
+              type="button"
+              autofocus
+              aria-label="Load and enter the in-browser interactive 3D world"
+            >
+              <span class="explore-gate-halo" aria-hidden="true"></span>
+              <span class="explore-gate-orbit orbit-outer" aria-hidden="true"></span>
+              <span class="explore-gate-orbit orbit-inner" aria-hidden="true"></span>
+              <span class="explore-gate-sparks" aria-hidden="true">
+                <i></i><i></i><i></i><i></i><i></i>
+                <i></i><i></i><i></i><i></i><i></i>
+              </span>
+              <span class="explore-gate-glyph" aria-hidden="true"><i></i></span>
+              <span class="explore-gate-copy">
+                <small>In-browser 3D experience</small>
+                <strong>Enter the world</strong>
+                <em>Load &amp; play</em>
+              </span>
+            </button>
+            <p>Three.js · no install · profile below ↓</p>
+          </div>
+        </div>
+
+        <div id="loading-panel" class="loading-panel" hidden role="status" aria-live="polite">
+          <span class="loading-orbit" aria-hidden="true"></span>
+          <strong>Opening the Field Station</strong>
+          <span id="loading-detail">Loading renderer and world systems…</span>
+        </div>
+
+        <aside id="world-hud" class="world-hud" hidden aria-label="World status">
+          <button id="lantern-button" class="lantern-chip" type="button" aria-label="Raise lantern" aria-pressed="false">
+            <kbd>F</kbd>
+            <span id="lantern-label">Raise lantern</span>
+          </button>
+          <button id="spell-button" class="spell-chip" type="button" aria-label="Cast spark spell">
+            <kbd>Q</kbd>
+            <span id="spell-label">Cast spark</span>
+          </button>
+          <div
+            id="compass-chip"
+            class="compass-chip"
+            role="img"
+            aria-label="Compass heading north"
+            hidden
+          >
+            <svg class="compass-dial" viewBox="0 0 32 32" aria-hidden="true">
+              <circle cx="16" cy="16" r="13"></circle>
+              <path class="compass-needle" d="M16 3.5 20 17l-4-2.3-4 2.3 4-13.5Z"></path>
+              <circle class="compass-pin" cx="16" cy="16" r="1.6"></circle>
+            </svg>
+            <span>
+              <small>Heading</small>
+              <strong id="compass-heading">N</strong>
+            </span>
+          </div>
+          <div class="location-chip">
+            <span class="location-pulse" aria-hidden="true"></span>
+            <span>
+              <small>Current location</small>
+              <strong id="zone-label">Field Station</strong>
+            </span>
+          </div>
+          <div id="metric-chip" class="metric-chip" aria-label="Rendering statistics">
+            <span id="metric-fps">-- FPS</span>
+            <span id="metric-draws">-- calls</span>
+          </div>
+        </aside>
+
+        <button
+          id="field-menu-button"
+          class="field-menu-button"
+          type="button"
+          data-action="field-menu"
+          aria-label="Open field folio: achievements, atlas, and settings"
+          aria-haspopup="dialog"
+          aria-controls="field-menu-dialog"
+          hidden
+        >
+          <span class="satchel-object" aria-hidden="true">
+            <i class="satchel-handle"></i>
+            <i class="satchel-flap"></i>
+            <i class="satchel-clasp"><b></b></i>
+            <i class="satchel-circuit"></i>
+          </span>
+          <span id="field-menu-count" class="field-menu-count">0/…</span>
+          <span class="field-menu-button-label">Field folio</span>
+        </button>
+
+        <div id="interaction-prompt" class="interaction-prompt" hidden>
+          <kbd>E</kbd>
+          <span id="interaction-label">Interact</span>
+        </div>
+
+        <div id="world-toast" class="world-toast" hidden aria-hidden="true"></div>
+
+        <aside
+          id="turtle-media-player"
+          class="turtle-media-player"
+          aria-label="Official YouTube music player"
+          hidden
+        ></aside>
+
+        <aside
+          id="void-ride-telemetry"
+          class="void-ride-telemetry"
+          aria-label="Void turtle ride telemetry"
+          hidden
+        >
+          <span><i></i> VOID RAID // TURTLE-07</span>
+          <strong>CHILL VECTOR</strong>
+          <small>GALAXY WEATHER · METEORITE DRIFT</small>
+        </aside>
+
+        <aside id="pong-hud" class="pong-hud" hidden aria-label="Cyan player versus coral Daemon Pong score and controls">
+          <span>Signal Pong</span>
+          <strong>
+            <i class="pong-cyan">Cyan</i>
+            <b id="pong-player-score">0</b>
+            <em>:</em>
+            <b id="pong-daemon-score">0</b>
+            <i class="pong-coral">Daemon</i>
+          </strong>
+          <small>Drag cyan paddle or packet · W/S or joystick · Q interferes · E exits</small>
+        </aside>
+
+        <div id="touch-controls" class="touch-controls" hidden aria-label="Touch game controls">
+          <div id="joystick" class="joystick" aria-label="Movement joystick">
+            <span id="joystick-knob" class="joystick-knob"></span>
+          </div>
+          <button id="touch-jump" class="touch-jump" type="button" aria-label="Jump">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M7 15.5 12 10l5 5.5M12 10V21M6 4h12" />
+            </svg>
+            <span>Jump</span>
+          </button>
+          <button id="touch-interact" class="touch-interact" type="button" aria-label="Interact">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8.5 11V5.5a1.5 1.5 0 0 1 3 0V10M11.5 9V4.5a1.5 1.5 0 0 1 3 0V10M14.5 9V6a1.5 1.5 0 0 1 3 0v6M8.5 9.5a1.5 1.5 0 0 0-3 0v4.8c0 3.7 2.7 6.7 6.4 6.7h.8c3.1 0 5.8-2 6.7-5l.9-3.1a1.7 1.7 0 0 0-3.2-1l-.6 1.6" />
+            </svg>
+            <span id="touch-interact-label">Interact</span>
+          </button>
+        </div>
+
+        <dialog
+          id="terminal-panel"
+          class="terminal-panel"
+          aria-labelledby="terminal-title"
+        >
+          <header>
+            <div>
+              <span class="terminal-lights" aria-hidden="true"><i></i><i></i><i></i></span>
+              <strong id="terminal-title">World terminal</strong>
+            </div>
+            <button type="button" class="close-button" data-close="terminal" aria-label="Close terminal">×</button>
+          </header>
+          <div
+            id="terminal-output"
+            class="terminal-output"
+            role="log"
+            aria-live="polite"
+            aria-relevant="additions text"
+          >
+            <p><span class="terminal-ok">world terminal online</span></p>
+            <p class="terminal-muted">Type <code>help</code>, or try <code>cd falls</code>.</p>
+          </div>
+          <form id="terminal-form" class="terminal-form" autocomplete="off">
+            <label class="sr-only" for="terminal-input">Terminal command</label>
+            <span id="terminal-prompt" aria-hidden="true">/$</span>
+            <input
+              id="terminal-input"
+              name="command"
+              type="text"
+              spellcheck="false"
+              autocapitalize="none"
+              autocomplete="off"
+            />
+          </form>
+        </dialog>
+
+        <div id="live-status" class="sr-only" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <dialog id="portfolio" class="panel-dialog portfolio-dialog" aria-labelledby="portfolio-heading">
+      <article>
+        <button
+          class="close-button portfolio-close-button"
+          type="button"
+          data-close="portfolio"
+          aria-label="Close portfolio"
+        >×</button>
+
+        <header class="dialog-header">
+          <div>
+            <p class="eyebrow"><span></span> Quick portfolio</p>
+            <h2 id="portfolio-heading">I make complicated software work in the real world.</h2>
+          </div>
+        </header>
+
+        <div class="portfolio-intro">
+          <img src="./images/ignat-forward-portrait.jpg" alt="Portrait of Ignat Remizov" />
+          <div class="portfolio-profile-copy">
+            <p class="portfolio-statement">
+              Right now I’m an Executive Director and the CTO at Zolvat. I helped take the
+              company through EMI licensing and built much of the technical foundation it runs
+              on. We launched in 2025. I lead the engineering work, but I’m still hands-on with
+              the difficult parts.
+            </p>
+            <p class="portfolio-summary">
+              Before that, I worked on advertising systems handling more than half a billion
+              impressions a day, security and architecture engagements, shops, mobile apps,
+              and a math-learning project I built with my father. I’m happiest fixing a real
+              problem, documenting it clearly, and leaving the people and systems around it
+              better than I found them.
+            </p>
+            <div class="portfolio-links">
+              <a href="mailto:ignat@ignatremizov.com">Personal email</a>
+              <a href="mailto:iremizov@zolvat.com">Zolvat email</a>
+              <a href="https://github.com/ignatremizov" target="_blank" rel="noreferrer noopener">GitHub</a>
+              <a href="https://www.linkedin.com/in/ignatremizov/" target="_blank" rel="noreferrer noopener">LinkedIn</a>
+              <a href="https://linktr.ee/ignatremizov" target="_blank" rel="noreferrer noopener">Linktree</a>
+            </div>
+          </div>
+        </div>
+
+        <section class="portfolio-section portfolio-scope" aria-labelledby="scope-heading">
+          <p class="section-label">How I work</p>
+          <h3 id="scope-heading">I lead the work, and I still build.</h3>
+          <p class="portfolio-section-copy">
+            I move between product decisions, system design, operations, and delivery. I’m at
+            my best taking a fuzzy problem, finding what matters, and building something
+            that works in practice.
+          </p>
+          <div class="capability-grid">
+            <article>
+              <span>01</span>
+              <h4>Leadership &amp; governance</h4>
+              <p>Technical strategy, engineering operations, budgeting, policies, risk, licensing readiness, and delivery.</p>
+              <small>strategy · controls · teams · delivery</small>
+            </article>
+            <article>
+              <span>02</span>
+              <h4>Backend &amp; payments</h4>
+              <p>APIs, services, queues, databases, core banking, payment rails, screening, and compliance automation.</p>
+              <small>Go · Python · SQL/NoSQL · mTLS · ISO 20022</small>
+            </article>
+            <article>
+              <span>03</span>
+              <h4>Cloud &amp; reliability</h4>
+              <p>Cloud-native infrastructure, delivery pipelines, monitoring, and production visibility across metrics, logs, and traces.</p>
+              <small>AWS · GCP · OpenTelemetry · Grafana · CI/CD</small>
+            </article>
+            <article>
+              <span>04</span>
+              <h4>Product &amp; creative range</h4>
+              <p>Pragmatic web UX, documentation, automation, and creative work spanning audio, writing, illustration, and 3D.</p>
+              <small>Vue · React · accessibility · docs · creative tooling</small>
+            </article>
+          </div>
+        </section>
+
+        <section class="portfolio-section" aria-labelledby="work-heading">
+          <p class="section-label">Experience</p>
+          <h3 id="work-heading">A few things I’ve actually shipped.</h3>
+          <div class="work-list">
+            <article>
+              <span>2024–present<br />Zolvat · Cyprus</span>
+              <div>
+                <h4>Executive Director and CTO · Zolvat</h4>
+                <p class="role-scope">Fintech · EMI/PSP · engineering leadership · regulated operations</p>
+                <dl class="role-metrics" aria-label="Selected Zolvat outcomes">
+                  <div><dt>€250k+</dt><dd>projected vendor fees avoided</dd></div>
+                  <div><dt>Millisecond</dt><dd>transaction processing times</dd></div>
+                  <div><dt>&gt;10M/mo</dt><dd>designed transaction capacity</dd></div>
+                </dl>
+                <ul>
+                  <li>Led the technical and regulatory readiness behind the EMI licence granted by the Central Bank of Cyprus in June 2024, including ICT risk, security, governance, and BCP/DR.</li>
+                  <li>Architected and delivered a proprietary core banking engine, corporate KYC onboarding, and transaction monitoring, avoiding a projected €250,000+ in third-party licensing costs.</li>
+                  <li>Built SEPA and SWIFT processing around ISO 20022, with XML-DSig and mTLS bank integrations, sanctions/PEP screening, and rule-based risk scoring.</li>
+                  <li>Built event-driven transaction processing with PostgreSQL LISTEN/NOTIFY wake hints and RabbitMQ on EKS for external flows. Internal transfers complete in milliseconds after compliance approval. The external path supports SEPA SCT Inst.</li>
+                  <li>Directed 12+ engineers across Europe and Asia while designing AWS/GCP infrastructure, CI/CD, and an observability stack spanning metrics, logs, and traces.</li>
+                </ul>
+              </div>
+            </article>
+            <article>
+              <span>2022–2024<br />Consulting · Cyprus</span>
+              <div>
+                <h4>Software architect and security consultant</h4>
+                <p class="role-scope">Architecture · security · delivery</p>
+                <dl class="role-metrics" aria-label="Selected consulting outcomes">
+                  <div><dt>3</dt><dd>businesses advised</dd></div>
+                  <div><dt>2</dt><dd>company architectures</dd></div>
+                  <div><dt>8</dt><dd>engineers led</dd></div>
+                </dl>
+                <ul>
+                  <li>Put practical security policies, controls, and continuous monitoring in place for three businesses.</li>
+                  <li>Designed architectures and untangled system workflows for two companies.</li>
+                  <li>Led eight engineers delivering a fintech platform with payment-network integrations while working across Go, Vue.js, Java, WordPress/PHP, and cloud infrastructure.</li>
+                </ul>
+              </div>
+            </article>
+            <article>
+              <span>2021–2022<br />IPONWEB · Cyprus</span>
+              <div>
+                <h4>Backend developer, real-time bidding systems · IPONWEB (now Criteo)</h4>
+                <p class="role-scope">Lua · RTB · performance · reliability</p>
+                <dl class="role-metrics" aria-label="Selected IPONWEB outcomes">
+                  <div><dt>500M+</dt><dd>daily impressions</dd></div>
+                  <div><dt>&gt;$4k/mo</dt><dd>infrastructure savings</dd></div>
+                  <div><dt>40%+</dt><dd>smaller logs</dd></div>
+                </dl>
+                <ul>
+                  <li>Built and maintained low-latency Lua services on demand- and supply-side real-time bidding systems operating at more than half a billion impressions a day.</li>
+                  <li>Removed more than $4,000 in monthly hardware cost by cutting unnecessary bid-request traffic, and reduced one project’s log volume by over 40%.</li>
+                  <li>Shipped privacy-first features across three RTB components and custom protocols supporting targeting for 300,000+ deals and 1.5 million+ users.</li>
+                </ul>
+              </div>
+            </article>
+            <article>
+              <span>2016–2021<br />Independent · USA &amp; remote</span>
+              <div>
+                <h4>Independent engineer · web, mobile, and commerce</h4>
+                <p class="role-scope">Web · mobile · commerce · client delivery</p>
+                <dl class="role-metrics" aria-label="Selected independent engineering outcomes">
+                  <div><dt>6+</dt><dd>commerce products shipped</dd></div>
+                  <div><dt>1,000+</dt><dd>antique goods sold</dd></div>
+                  <div><dt>15%</dt><dd>faster Magento caching</dd></div>
+                </dl>
+                <ul>
+                  <li>Built a half-dozen web and mobile commerce products, connecting payments, shipping, parcel tracking, email campaigns, and the unglamorous back-office pieces that make a shop work.</li>
+                  <li>Helped an antique store sell more than 1,000 items online through international storefronts and practical SEO work.</li>
+                  <li>Refactored a Magento backend for 15% faster cache generation, maintained inventory and proprietary ordering tools, and documented them for whoever came next.</li>
+                </ul>
+              </div>
+            </article>
+            <article>
+              <span>2010–2016<br />MightyMatica · Fuzz · USA</span>
+              <div>
+                <h4>Educational games, iOS, and the beginning of all this</h4>
+                <p class="role-scope">Flash · Adobe AIR · iOS · teaching · creative technology</p>
+                <dl class="role-metrics" aria-label="Selected early-career outcomes">
+                  <div><dt>Several thousand</dt><dd>educational app sales</dd></div>
+                  <div><dt>3+</dt><dd>client iOS apps</dd></div>
+                  <div><dt>K–12</dt><dd>math students taught</dd></div>
+                </dl>
+                <ul>
+                  <li>Built a bilingual math site and numerous iOS and Android learning games with my father, using Flash and Adobe AIR; the apps went on to make several thousand sales.</li>
+                  <li>Turned lessons into interactive diagrams, animations, and small games, then helped tutor students who were struggling with the material.</li>
+                  <li>At Fuzz Productions, contributed to 3+ iOS projects and set up Jenkins build-and-test automation that removed hours of manual App Store deployment work.</li>
+                </ul>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="portfolio-section" aria-labelledby="artifacts-heading">
+          <p class="section-label">Elsewhere</p>
+          <h3 id="artifacts-heading">A few things you can actually open.</h3>
+          <div class="artifact-list">
+            <a href="https://zolvat.com" target="_blank" rel="noreferrer noopener">
+              <strong>Zolvat platform</strong>
+              <span>Core banking, onboarding, monitoring, payments, and internal tooling</span>
+            </a>
+            <a href="https://github.com/ignatremizov" target="_blank" rel="noreferrer noopener">
+              <strong>Code archive</strong>
+              <span>Repositories, experiments, utilities, and older projects</span>
+            </a>
+            <a href="https://linktr.ee/ignatremizov" target="_blank" rel="noreferrer noopener">
+              <strong>Creative signals</strong>
+              <span>Writing, audio, social links, and personal work collected on Linktree</span>
+            </a>
+            <a href="./improv-games.html">
+              <strong>Improv games</strong>
+              <span>A small legacy side project: simple, odd, and still part of the archive</span>
+            </a>
+          </div>
+        </section>
+
+        <footer class="portfolio-footer">
+          <span>Limassol, Cyprus · working across Europe and Asia · Europe/Nicosia</span>
+          <span>
+            <a href="mailto:ignat@ignatremizov.com">ignat@ignatremizov.com</a>
+            ·
+            <a href="https://linktr.ee/ignatremizov" target="_blank" rel="noreferrer noopener">Linktree</a>
+          </span>
+        </footer>
+      </article>
+    </dialog>
+
+    <dialog
+      id="field-menu-dialog"
+      class="panel-dialog field-folio-dialog"
+      aria-labelledby="field-menu-heading"
+    >
+      <article class="field-folio">
+        <span class="folio-spine" aria-hidden="true"><i></i><i></i><i></i></span>
+        <header class="field-folio-header">
+          <div>
+            <p class="eyebrow"><span></span> Satchel instrument · field folio</p>
+            <h2 id="field-menu-heading">The road, recorded.</h2>
+          </div>
+          <div class="folio-header-status" aria-label="Current world runtime">
+            <span><small>Position</small><strong id="folio-zone-value">Field Station</strong></span>
+            <span><small>Renderer</small><strong id="folio-quality-value">Auto</strong></span>
+          </div>
+          <button
+            class="close-button folio-close-button"
+            type="button"
+            data-close="fieldMenu"
+            aria-label="Close field folio"
+          >×</button>
+        </header>
+
+        <nav class="folio-tabs" role="tablist" aria-label="Field folio sections">
+          <button
+            id="folio-tab-journal"
+            type="button"
+            role="tab"
+            aria-selected="true"
+            aria-controls="folio-panel-journal"
+            data-folio-tab="journal"
+          >
+            <span aria-hidden="true">✦</span>
+            Journey
+          </button>
+          <button
+            id="folio-tab-atlas"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="folio-panel-atlas"
+            data-folio-tab="atlas"
+            tabindex="-1"
+          >
+            <span aria-hidden="true">⌖</span>
+            Atlas
+          </button>
+          <button
+            id="folio-tab-spells"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="folio-panel-spells"
+            data-folio-tab="spells"
+            tabindex="-1"
+          >
+            <span aria-hidden="true">✧</span>
+            Spells
+          </button>
+          <button
+            id="folio-tab-settings"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="folio-panel-settings"
+            data-folio-tab="settings"
+            tabindex="-1"
+          >
+            <span aria-hidden="true">⌁</span>
+            Magitech
+          </button>
+        </nav>
+
+        <section
+          id="folio-panel-journal"
+          class="folio-panel folio-journal-panel"
+          role="tabpanel"
+          aria-labelledby="folio-tab-journal"
+          data-folio-panel="journal"
+        >
+          <header class="folio-panel-heading">
+            <div>
+              <p class="folio-kicker">Milestone ledger</p>
+              <h3>What survived the telling.</h3>
+              <p>Completed discoveries keep their first account. Unwritten leaves remain deliberately unhelpful.</p>
+            </div>
+            <div class="folio-progress" aria-live="polite">
+              <strong id="achievement-progress-value">0 / …</strong>
+              <span><i id="achievement-progress-bar"></i></span>
+              <small>marks deciphered</small>
+            </div>
+          </header>
+          <div id="achievement-list" class="achievement-list"></div>
+        </section>
+
+        <section
+          id="folio-panel-atlas"
+          class="folio-panel folio-atlas-panel"
+          role="tabpanel"
+          aria-labelledby="folio-tab-atlas"
+          data-folio-panel="atlas"
+          hidden
+        >
+          <header class="folio-panel-heading">
+            <div>
+              <p class="folio-kicker">Indexed thresholds</p>
+              <h3>Fold the world.</h3>
+              <p>A worn or nearby cyan pencil draws the route. Without one, the atlas lends your feet a path through the physical thresholds.</p>
+            </div>
+            <div class="atlas-compass" aria-hidden="true">
+              <i></i><b>N</b><span></span>
+            </div>
+          </header>
+          <div
+            class="atlas-starmap"
+            data-math-indexed="false"
+            aria-label="Dimensional atlas of indexed thresholds"
+          >
+            <svg
+              class="atlas-routes"
+              viewBox="0 0 1000 460"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <path d="M500 230 C390 190 280 140 170 120"></path>
+              <path d="M500 230 C610 175 690 130 780 115"></path>
+              <path d="M500 230 C420 300 340 340 260 355"></path>
+              <path
+                class="atlas-route-depth"
+                d="M780 115 C845 155 882 222 895 300"
+              ></path>
+              <circle cx="500" cy="230" r="54"></circle>
+              <circle cx="500" cy="230" r="91"></circle>
+            </svg>
+            <button
+              class="atlas-place atlas-place-field"
+              type="button"
+              data-zone="field"
+            >
+              <i class="map-node amber" aria-hidden="true"></i>
+              <span><strong>Field Station</strong><small>Hub · identity · contact</small></span>
+            </button>
+            <button
+              class="atlas-place atlas-place-falls"
+              type="button"
+              data-zone="falls"
+            >
+              <i class="map-node green" aria-hidden="true"></i>
+              <span><strong>Luminous Falls</strong><small>Rituals · river · hidden paths</small></span>
+            </button>
+            <button
+              class="atlas-place atlas-place-grid"
+              type="button"
+              data-zone="grid"
+            >
+              <i class="map-node cyan" aria-hidden="true"></i>
+              <span><strong>Signal Grid</strong><small>Systems · games · daemons</small></span>
+            </button>
+            <button
+              class="atlas-place atlas-place-math"
+              type="button"
+              data-zone="mightymatica"
+              data-discovery-zone="math"
+              data-locked="true"
+              aria-label="Unresolved depth beneath Signal Grid; not yet indexed"
+              aria-disabled="true"
+              disabled
+            >
+              <i class="map-node amber" aria-hidden="true"></i>
+              <span>
+                <strong data-discovery-label>Unresolved depth</strong>
+                <small data-discovery-detail>Grid sub-layer · no stable route</small>
+              </span>
+            </button>
+            <button
+              class="atlas-place atlas-place-archive"
+              type="button"
+              data-zone="archive"
+            >
+              <i class="map-node violet" aria-hidden="true"></i>
+              <span><strong>Space Archive</strong><small>Markets · observability · strange skies</small></span>
+            </button>
+          </div>
+          <p class="dialog-note">
+            Physical discovery resolves deeper nodes and stores their routes on this device.
+          </p>
+        </section>
+
+        <section
+          id="folio-panel-spells"
+          class="folio-panel folio-spells-panel"
+          role="tabpanel"
+          aria-labelledby="folio-tab-spells"
+          data-folio-panel="spells"
+          hidden
+        >
+          <header class="folio-panel-heading">
+            <div>
+              <p class="folio-kicker">Recovered spell lattice</p>
+              <h3>Choose the weather.</h3>
+              <p>Recovered forms remain yours. Equip any one of them without disturbing the challenges already recorded.</p>
+            </div>
+            <div class="spell-lattice-readout" aria-live="polite">
+              <span>SPELL BUS</span>
+              <strong id="spell-selection-status">Spark equipped · 1 of 3 forms recovered</strong>
+              <small id="packet-spell-status" data-active="false">PACKET INTERFERENCE // DORMANT</small>
+            </div>
+          </header>
+
+          <div class="spell-form-grid" role="group" aria-label="Equip a recovered spell form">
+            <button
+              class="spell-form-card spell-form-spark"
+              type="button"
+              data-spell-setting="spark"
+              data-active="true"
+              data-locked="false"
+              aria-pressed="true"
+            >
+              <span class="spell-form-sigil" aria-hidden="true"><i></i></span>
+              <span>
+                <small>FORM 01</small>
+                <strong>Spark</strong>
+                <em>A blue handlight with a quick digital wake.</em>
+              </span>
+              <b data-spell-state>EQUIPPED</b>
+            </button>
+            <button
+              class="spell-form-card spell-form-surge"
+              type="button"
+              data-spell-setting="surge"
+              data-active="false"
+              data-locked="true"
+              aria-pressed="false"
+              disabled
+            >
+              <span class="spell-form-sigil" aria-hidden="true"><i></i></span>
+              <span>
+                <small>FORM 02</small>
+                <strong>Surge</strong>
+                <em>Violet digits gather into a broader field.</em>
+              </span>
+              <b data-spell-state>SEALED</b>
+            </button>
+            <button
+              class="spell-form-card spell-form-thunder"
+              type="button"
+              data-spell-setting="thunder"
+              data-active="false"
+              data-locked="true"
+              aria-pressed="false"
+              disabled
+            >
+              <span class="spell-form-sigil" aria-hidden="true"><i></i></span>
+              <span>
+                <small>FORM 03</small>
+                <strong>Thunder</strong>
+                <em>Amber voltage crowns the completed lattice.</em>
+              </span>
+              <b data-spell-state>SEALED</b>
+            </button>
+          </div>
+          <p class="dialog-note">
+            Terminal mirror: <code>spell &lt;form&gt;</code>. Sandbox override:
+            <code>override spell &lt;form&gt;</code>.
+          </p>
+        </section>
+
+        <section
+          id="folio-panel-settings"
+          class="folio-panel folio-settings-panel"
+          role="tabpanel"
+          aria-labelledby="folio-tab-settings"
+          data-folio-panel="settings"
+          hidden
+        >
+          <header class="folio-panel-heading">
+            <div>
+              <p class="folio-kicker">Aetheric control plane</p>
+              <h3>Tune the instrument.</h3>
+              <p>Brass outside, diagnostics inside. Changes apply live and remain on this device.</p>
+            </div>
+            <div class="magitech-readout" aria-label="Live renderer diagnostics">
+              <span>RENDER PIPELINE</span>
+              <strong id="folio-fps-value">-- FPS</strong>
+              <small id="folio-draws-value">-- DRAW CALLS</small>
+            </div>
+          </header>
+
+          <div class="settings-grid">
+            <section class="setting-module setting-module-wide" aria-labelledby="quality-setting-heading">
+              <div class="setting-module-copy">
+                <span class="setting-rune" aria-hidden="true">◇</span>
+                <div>
+                  <h4 id="quality-setting-heading">Render lattice</h4>
+                  <p id="quality-setting-description">Pixel density, shadow cache, and frame target.</p>
+                </div>
+              </div>
+              <div class="segmented-control" role="group" aria-label="Rendering quality">
+                <button type="button" data-quality-setting="low">Low<small>1× · flat · 30</small></button>
+                <button type="button" data-quality-setting="medium">Medium<small>1.25× · 512px</small></button>
+                <button type="button" data-quality-setting="high">High<small>1.5× · 1024px</small></button>
+              </div>
             </section>
-    	        <p id="Welcome" class="centered" onclick="">Hello Internet!<br> Welcome to my space. 🌌🌠🌌 <!--<a href="https://github.com/ignat980" title="My Github">Ignat</a>-->
-                </p>
-            <footer class="strechBottom footer">
-                <!-- <h3 style="margin-left:1em">About</h3> -->
-                <a class="resume" href="https://docs.google.com/document/d/1F1P6feqkNjLMaGkOUJjrRht7rBgObllvjmCp8Cv5jN8/edit?usp=sharing">View My Resume</a>
-                <div id="smiley" class="centeredHorizontally">
-    				<!-- <p id="smileyText" > -->
-                        <marquee>
-                            <p>
-                                Enjoy your stay! <img id="smileyImg" src="images/Smiley-Face.png" alt="Hello says the face" height="40" width="40">
-                            </p>
-                        </marquee>
-                    <!-- </p> -->
-    			</div>
-            </footer>
-		</div>
 
-        <script>
-        (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
-        (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
-        m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
-        })(window,document,'script','http://www.google-analytics.com/analytics.js','ga');
+            <section class="setting-module" aria-labelledby="contrast-setting-heading">
+              <div class="setting-module-copy">
+                <span class="setting-rune" aria-hidden="true">◐</span>
+                <div>
+                  <h4 id="contrast-setting-heading">Ink gain</h4>
+                  <p>Raise quiet text and etched borders without relighting the world.</p>
+                </div>
+              </div>
+              <div class="segmented-control segmented-control-compact" role="group" aria-label="Interface contrast">
+                <button type="button" data-contrast-setting="atmospheric">Atmospheric</button>
+                <button type="button" data-contrast-setting="high">High contrast</button>
+              </div>
+            </section>
 
-        ga('create', 'UA-61893763-1', 'auto');
-        ga('send', 'pageview');
+            <section class="setting-module" aria-labelledby="motion-setting-heading">
+              <div class="setting-module-copy">
+                <span class="setting-rune" aria-hidden="true">≈</span>
+                <div>
+                  <h4 id="motion-setting-heading">Motion governor</h4>
+                  <p>System follows device accessibility; Reduced calms optional world motion.</p>
+                </div>
+              </div>
+              <div class="segmented-control segmented-control-compact" role="group" aria-label="Motion preference">
+                <button type="button" data-motion-setting="system">System</button>
+                <button type="button" data-motion-setting="reduced">Reduced</button>
+              </div>
+            </section>
 
-        </script>
-        <script
-        src="https://code.jquery.com/jquery-3.7.1.min.js"
-        integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo="
-        crossorigin="anonymous"></script>
-        <script>
-            window.jQuery || document.write('<script src="js/vendor/jquery-latest.min.js" defer><\/script>')
-        </script>
-        <script src="js/plugins.js"></script>
-        <script src="js/main.js"></script>
-	</body>
+            <section class="setting-module setting-switch-module" aria-labelledby="metrics-setting-heading">
+              <div class="setting-module-copy">
+                <span class="setting-rune" aria-hidden="true">⌁</span>
+                <div>
+                  <h4 id="metrics-setting-heading">Telemetry glyphs</h4>
+                  <p>Show live FPS and draw calls in the world HUD.</p>
+                </div>
+              </div>
+              <button
+                id="metrics-setting"
+                class="magitech-switch"
+                type="button"
+                role="switch"
+                aria-checked="true"
+              >
+                <span></span><strong>Visible</strong>
+              </button>
+            </section>
+
+            <section class="setting-module setting-utilities" aria-labelledby="utility-setting-heading">
+              <div class="setting-module-copy">
+                <span class="setting-rune" aria-hidden="true">⌂</span>
+                <div>
+                  <h4 id="utility-setting-heading">Field utilities</h4>
+                  <p>Reference controls or recover to the current threshold’s safe anchor.</p>
+                </div>
+              </div>
+              <div>
+                <button type="button" data-folio-action="help">Open field manual</button>
+                <button type="button" data-folio-action="respawn">Respawn here</button>
+              </div>
+            </section>
+
+            <section
+              id="record-reset-module"
+              class="setting-module setting-record-reset"
+              aria-labelledby="record-reset-heading"
+              data-collapse-armed="false"
+            >
+              <div class="setting-module-copy">
+                <span class="record-reset-singularity" aria-hidden="true">
+                  <span class="record-reset-disk"></span>
+                  <span class="record-reset-core"></span>
+                  <span class="record-reset-spark record-reset-spark-a"></span>
+                  <span class="record-reset-spark record-reset-spark-b"></span>
+                  <span class="record-reset-spark record-reset-spark-c"></span>
+                </span>
+                <div>
+                  <h4 id="record-reset-heading">Local expedition record</h4>
+                  <p id="progress-reset-status" aria-live="polite">Achievements, indexed routes, and spell progression. Appearance settings remain.</p>
+                </div>
+              </div>
+              <div class="record-reset-actions">
+                <button
+                  id="collapse-command-button"
+                  class="collapse-command-button"
+                  type="button"
+                  hidden
+                >
+                  <code>sudo collapse world --event-horizon --arm</code>
+                  <span>Send to terminal</span>
+                </button>
+                <button
+                  id="progress-reset-button"
+                  class="record-reset-button"
+                  type="button"
+                  data-confirming="false"
+                >Reset expedition record</button>
+                <button
+                  id="progress-reset-quiet-button"
+                  class="record-reset-quiet-button"
+                  type="button"
+                  data-confirming="false"
+                  hidden
+                >Reset without sequence</button>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <footer class="folio-footer">
+          <span><kbd>J</kbd> folio · <kbd>M</kbd> atlas · <kbd>Esc</kbd> close</span>
+          <span>FIELD BUS // LOCAL STATE // NO CLOUD SYNC</span>
+        </footer>
+      </article>
+    </dialog>
+
+    <dialog id="help-dialog" class="panel-dialog help-dialog" aria-labelledby="help-heading">
+      <article>
+        <header class="dialog-header">
+          <div>
+            <p class="eyebrow"><span></span> Field manual</p>
+            <h2 id="help-heading">Controls and recovery.</h2>
+          </div>
+          <button class="close-button" type="button" data-close="help" aria-label="Close help">×</button>
+        </header>
+        <dl class="controls-list">
+          <div><dt>Move</dt><dd>WASD or arrow keys</dd></div>
+          <div><dt>Sprint</dt><dd>Hold Shift</dd></div>
+          <div><dt>Jump</dt><dd>Spacebar</dd></div>
+          <div><dt>Cast / charge</dt><dd>Hold Q or the spell button; release to cast</dd></div>
+          <div><dt>Lantern</dt><dd>F or lantern button · reveals hidden ink</dd></div>
+          <div><dt>Telekinesis</dt><dd>Drag loose objects; Archive worlds support multi-touch</dd></div>
+          <div><dt>Pong paddle</dt><dd>Drag the cyan paddle, or use W/S / joystick</dd></div>
+          <div><dt>Compass</dt><dd>Mouse-drag the table compass to acquire it and reveal your HUD heading</dd></div>
+          <div><dt>Interact</dt><dd>E or Enter</dd></div>
+          <div><dt>Field folio</dt><dd>J or satchel button</dd></div>
+          <div><dt>Atlas</dt><dd>M</dd></div>
+          <div><dt>Terminal</dt><dd>Backtick or T</dd></div>
+          <div><dt>Portfolio</dt><dd>P</dd></div>
+          <div><dt>Respawn / repair runes</dt><dd>R</dd></div>
+        </dl>
+        <p class="dialog-note">
+          Pong and Archive may resolve in either order. Learn Packet Surge and complete both
+          outcomes to unlock Thunder.
+        </p>
+        <p class="dialog-note">
+          Terminal <code>cd &lt;place&gt;</code> takes the immediate shell route.
+          <code>tp &lt;place&gt;</code> performs the drawn-circle rite and requires the cyan pencil equipped.
+        </p>
+        <p class="dialog-note">On touch screens, keep one finger on the joystick while other fingers drag separate Archive worlds; the cyan Pong paddle also follows a direct drag. Type <code>help</code> in the terminal for cheats.</p>
+      </article>
+    </dialog>
+
+    <noscript>
+      <section class="noscript">
+        <h1>Ignat Remizov</h1>
+        <p>CTO, systems builder, and creative technologist based in Limassol, Cyprus.</p>
+        <p><a href="mailto:ignat@ignatremizov.com">Email</a> · <a href="https://github.com/ignatremizov">GitHub</a></p>
+      </section>
+    </noscript>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
 </html>

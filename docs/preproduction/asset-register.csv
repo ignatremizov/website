@@ -1,0 +1,19 @@
+id,category,source,license,attribution,local_path,status,notes
+concept-anchor,concept,OpenAI built-in image generation,project input,N/A,art/concepts/00-art-direction-anchor.png,approved,Style reference only
+concept-map,concept,OpenAI built-in image generation,project input,N/A,art/concepts/01-world-map.png,approved,Topology reference only
+concept-field,concept,OpenAI built-in image generation,project input,N/A,art/concepts/02-field-station-keyframe.png,approved,Environment reference
+concept-falls,concept,OpenAI built-in image generation,project input,N/A,art/concepts/03-luminous-falls-keyframe.png,approved,Environment reference
+concept-grid,concept,OpenAI built-in image generation,project input,N/A,art/concepts/04-signal-grid-keyframe.png,approved,Environment reference
+concept-archive,concept,OpenAI built-in image generation,project input,N/A,art/concepts/05-space-archive-keyframe.png,approved,Environment reference
+concept-player-equipped,concept,OpenAI built-in image generation,project input,N/A,art/concepts/06-player-equipped-turnaround.png,approved,Visual design only
+concept-player-rig,concept,OpenAI built-in image generation,project input,N/A,art/concepts/07-player-rigging-turnaround.png,approved,Meshy and rigging trial reference
+concept-npcs,concept,OpenAI built-in image generation,project input,N/A,art/concepts/08-npc-lineup.png,approved,Silhouette reference
+concept-altar,concept,OpenAI built-in image generation,project input,N/A,art/concepts/09-rune-altar-turnaround.png,approved,Meshy trial reference
+concept-terminal,concept,OpenAI built-in image generation,project input,N/A,art/concepts/10-signal-terminal-turnaround.png,approved,Meshy trial reference
+concept-materials,concept,OpenAI built-in image generation,project input,N/A,art/concepts/11-material-palette.png,approved,Material reference
+concept-kit,concept,OpenAI built-in image generation,project input,N/A,art/concepts/12-modular-kit.png,approved,Modeling inventory
+concept-ui,concept,OpenAI built-in image generation,project input,N/A,art/concepts/13-ui-hud-sheet.png,approved,HTML and CSS reference
+space-smiley,image,repository project asset,project asset,N/A,images/Smiley-Face.png,approved,Smiley monitor and favicon reference
+field-hero,image,project-generated asset,project input,N/A,images/field-arch-hero.jpg,approved,Loading-shell background
+portrait,image,project-generated asset,project input,N/A,images/ignat-forward-portrait.jpg,approved,Quick Portfolio portrait
+turtle-undertale-youtube,audio,https://www.youtube.com/watch?v=KtC-pl9P3kE,official YouTube embed,Toby Fox / Materia Music Publishing,N/A,approved,Visible privacy-enhanced player created only during the turtle ride

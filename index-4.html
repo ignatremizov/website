@@ -1,0 +1,2452 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>Ignat Remizov - Systems Under Strange Skies</title>
+  <meta name="description" content="Ignat Remizov builds readable systems for complex work: fintech platforms, payment infrastructure, compliance automation, and creative technical artifacts." />
+  <link rel="canonical" href="https://ignatremizov.com/" />
+  <link rel="icon" type="image/png" href="./images/Smiley-Face.png" />
+
+  <meta property="og:title" content="Ignat Remizov" />
+  <meta property="og:description" content="Readable systems for complex work, under strange skies." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://ignatremizov.com/" />
+  <meta property="og:image" content="https://ignatremizov.com/images/field-arch-hero.jpg" />
+
+  <style>
+    :root {
+      --bg: #06090b;
+      --bg-soft: #0e1518;
+      --panel: rgba(8, 13, 15, 0.72);
+      --panel-solid: #11191b;
+      --paper: #ece6d8;
+      --ink: #f7f2e8;
+      --muted: rgba(247, 242, 232, 0.68);
+      --quiet: rgba(247, 242, 232, 0.44);
+      --line: rgba(247, 242, 232, 0.18);
+      --line-strong: rgba(247, 242, 232, 0.34);
+      --gold: #f0b45b;
+      --green: #93c47d;
+      --cyan: #74d8e3;
+      --red: #f06449;
+      --violet: #9e8cff;
+      --radius: 10px;
+      --shadow: 0 22px 70px rgba(0, 0, 0, 0.42);
+      --sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --serif: Georgia, "Times New Roman", Times, serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      letter-spacing: 0;
+    }
+
+    html {
+      background: var(--bg);
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 10% 0%, rgba(116, 216, 227, 0.12), transparent 32rem),
+        linear-gradient(180deg, #06090b 0%, #0c1214 48%, #050707 100%);
+      font-family: var(--sans);
+      line-height: 1.55;
+      text-rendering: optimizeLegibility;
+    }
+
+    img,
+    svg {
+      display: block;
+      max-width: 100%;
+    }
+
+    a {
+      color: inherit;
+      text-decoration-thickness: 1px;
+      text-underline-offset: 0.2em;
+    }
+
+    a:hover {
+      color: var(--gold);
+    }
+
+    .skip-link {
+      position: fixed;
+      left: 18px;
+      top: 18px;
+      z-index: 80;
+      transform: translateY(-180%);
+      padding: 10px 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel-solid);
+      color: var(--ink);
+    }
+
+    .skip-link:focus {
+      transform: translateY(0);
+    }
+
+    .edge-growth {
+      position: fixed;
+      top: 0;
+      bottom: 0;
+      width: min(150px, 12vw);
+      z-index: 8;
+      pointer-events: none;
+      opacity: 0.36;
+      filter: saturate(0.85) brightness(0.58) contrast(1.1);
+      background:
+        linear-gradient(90deg, rgba(5, 7, 7, 0.15), transparent 70%),
+        url("./images/foliage-edge.jpg");
+      background-repeat: no-repeat, repeat-y;
+      background-size: 100% 100%, auto 1600px;
+      background-position: center, center var(--foliage-y, 0px);
+      mask-image: linear-gradient(90deg, #000 0%, rgba(0, 0, 0, 0.86) 34%, transparent 100%);
+    }
+
+    .edge-growth.left {
+      left: 0;
+    }
+
+    .edge-growth.right {
+      right: 0;
+      transform: scaleX(-1);
+    }
+
+    .atlas-rail {
+      position: fixed;
+      left: max(18px, calc((100vw - 1180px) / 2 - 70px));
+      top: 50%;
+      z-index: 24;
+      transform: translateY(-50%);
+      display: grid;
+      gap: 12px;
+      color: rgba(247, 242, 232, 0.48);
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      pointer-events: auto;
+    }
+
+    .atlas-rail::before {
+      content: "";
+      position: absolute;
+      left: 12px;
+      top: 13px;
+      bottom: 13px;
+      width: 1px;
+      background: rgba(247, 242, 232, 0.16);
+    }
+
+    .atlas-rail::after {
+      content: "";
+      position: absolute;
+      left: 12px;
+      top: 13px;
+      width: 1px;
+      height: calc((100% - 26px) * var(--route-progress, 0));
+      background: linear-gradient(180deg, var(--gold), var(--cyan));
+      box-shadow: 0 0 16px rgba(116, 216, 227, 0.32);
+    }
+
+    .route-link {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 24px auto;
+      align-items: center;
+      gap: 8px;
+      color: inherit;
+      text-decoration: none;
+      text-transform: uppercase;
+      opacity: 0.76;
+      transition: color 160ms ease, opacity 160ms ease;
+    }
+
+    .route-link::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      margin-left: 9px;
+      border: 1px solid currentColor;
+      border-radius: 50%;
+      background: #06090b;
+      box-shadow: 0 0 0 4px rgba(6, 9, 11, 0.82);
+    }
+
+    .route-link[aria-current="true"] {
+      color: var(--gold);
+      opacity: 1;
+    }
+
+    .route-link[aria-current="true"]::before {
+      background: currentColor;
+      box-shadow:
+        0 0 0 4px rgba(6, 9, 11, 0.86),
+        0 0 18px rgba(240, 180, 91, 0.5);
+    }
+
+    .scene {
+      position: relative;
+      min-height: 100svh;
+      overflow: hidden;
+      isolation: isolate;
+      background: #071014;
+    }
+
+    .scene-bg {
+      position: absolute;
+      inset: -3vh -3vw;
+      z-index: -5;
+      width: 106vw;
+      height: 106vh;
+      object-fit: cover;
+      object-position: center;
+      filter: saturate(0.92) contrast(1.05) brightness(0.78);
+      transform: translate3d(calc(var(--mx, 0) * -10px), calc(var(--my, 0) * -8px), 0) scale(1.02);
+      transition: transform 180ms ease-out;
+    }
+
+    .scene::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -4;
+      background:
+        linear-gradient(90deg, rgba(4, 7, 9, 0.94) 0%, rgba(4, 7, 9, 0.82) 29%, rgba(4, 7, 9, 0.36) 58%, rgba(4, 7, 9, 0.34) 100%),
+        linear-gradient(180deg, rgba(4, 7, 9, 0.1) 0%, rgba(4, 7, 9, 0.42) 70%, rgba(4, 7, 9, 0.92) 100%);
+    }
+
+    .scene::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -3;
+      opacity: 0.42;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(247, 242, 232, 0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(247, 242, 232, 0.04) 1px, transparent 1px);
+      background-size: 72px 72px;
+      mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.88), transparent 74%);
+    }
+
+    .meteor-layer {
+      position: absolute;
+      inset: 0;
+      z-index: -2;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    .meteor {
+      position: absolute;
+      width: 138px;
+      height: 1px;
+      transform: rotate(-23deg);
+      transform-origin: left center;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.92), transparent);
+      box-shadow: 0 0 12px rgba(255, 255, 255, 0.7);
+      opacity: 0.45;
+      animation: drift 7s linear infinite;
+    }
+
+    .meteor:nth-child(1) { left: 13%; top: 14%; animation-delay: -1s; }
+    .meteor:nth-child(2) { left: 31%; top: 22%; animation-delay: -4s; width: 92px; opacity: 0.34; }
+    .meteor:nth-child(3) { left: 18%; top: 43%; animation-delay: -6s; width: 116px; opacity: 0.28; }
+    .meteor:nth-child(4) { left: 49%; top: 17%; animation-delay: -2s; width: 128px; opacity: 0.32; }
+    .meteor:nth-child(5) { left: 70%; top: 10%; animation-delay: -5s; width: 88px; opacity: 0.24; }
+
+    @keyframes drift {
+      0% { transform: translate3d(0, 0, 0) rotate(-23deg); opacity: 0; }
+      9% { opacity: 0.55; }
+      48% { opacity: 0.18; }
+      100% { transform: translate3d(230px, 92px, 0) rotate(-23deg); opacity: 0; }
+    }
+
+    .topbar {
+      width: min(1180px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 24px 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      color: #fff;
+      text-decoration: none;
+      min-width: 0;
+    }
+
+    .sigil {
+      position: relative;
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line-strong);
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 50% 50%, rgba(240, 180, 91, 0.18), transparent 48%),
+        rgba(8, 13, 15, 0.64);
+      box-shadow: 0 0 24px rgba(240, 180, 91, 0.16);
+    }
+
+    .sigil::before,
+    .sigil::after {
+      content: "";
+      position: absolute;
+      border: 1px solid rgba(240, 180, 91, 0.46);
+      border-radius: 50%;
+    }
+
+    .sigil::before {
+      inset: 7px;
+    }
+
+    .sigil::after {
+      inset: 14px;
+    }
+
+    .sigil span {
+      position: relative;
+      z-index: 1;
+      font-family: var(--serif);
+      font-size: 0.96rem;
+      color: var(--paper);
+    }
+
+    .brand strong {
+      display: block;
+      font-size: 1rem;
+      line-height: 1.1;
+    }
+
+    .brand small {
+      display: block;
+      margin-top: 3px;
+      color: var(--quiet);
+      font-family: var(--mono);
+      font-size: 0.72rem;
+    }
+
+    .nav {
+      display: flex;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .nav a {
+      min-height: 38px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 12px;
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+      color: rgba(255, 255, 255, 0.76);
+      font-size: 0.92rem;
+      font-weight: 650;
+      text-decoration: none;
+      background: rgba(8, 13, 15, 0.2);
+    }
+
+    .nav a:hover {
+      color: #fff;
+      border-color: var(--line);
+      background: rgba(8, 13, 15, 0.54);
+    }
+
+    .hero {
+      position: relative;
+      width: min(1180px, calc(100% - 40px));
+      min-height: calc(100svh - 94px);
+      margin: 0 auto;
+      padding: 74px 0 96px;
+      display: grid;
+      grid-template-columns: minmax(0, 0.98fr) minmax(320px, 0.72fr);
+      gap: 52px;
+      align-items: center;
+    }
+
+    .hero-scope {
+      position: absolute;
+      right: -18px;
+      top: 18%;
+      z-index: -1;
+      width: min(570px, 48vw);
+      aspect-ratio: 1.12;
+      border: 1px solid rgba(240, 180, 91, 0.28);
+      border-radius: 54% 46% 48% 52%;
+      background:
+        radial-gradient(circle at 54% 50%, transparent 0 34%, rgba(240, 180, 91, 0.11) 35% 35.5%, transparent 36%),
+        radial-gradient(circle at 54% 50%, transparent 0 49%, rgba(116, 216, 227, 0.12) 50% 50.4%, transparent 51%),
+        conic-gradient(from 216deg at 54% 50%, transparent 0 34deg, rgba(116, 216, 227, 0.24) 35deg 44deg, transparent 45deg 168deg, rgba(240, 180, 91, 0.28) 169deg 177deg, transparent 178deg 360deg);
+      box-shadow:
+        inset 0 0 48px rgba(116, 216, 227, 0.06),
+        0 0 54px rgba(240, 180, 91, 0.08);
+      pointer-events: none;
+      opacity: 0.78;
+      transform: rotate(-8deg);
+    }
+
+    .hero-scope::before,
+    .hero-scope::after {
+      content: "";
+      position: absolute;
+      pointer-events: none;
+    }
+
+    .hero-scope::before {
+      left: 5%;
+      right: 8%;
+      top: 50%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(240, 180, 91, 0.58), rgba(116, 216, 227, 0.42), transparent);
+      transform: rotate(12deg);
+    }
+
+    .hero-scope::after {
+      left: 52%;
+      top: 49%;
+      width: 10px;
+      height: 10px;
+      border: 1px solid rgba(240, 180, 91, 0.8);
+      border-radius: 50%;
+      background: rgba(6, 9, 11, 0.72);
+      box-shadow:
+        -220px 52px 0 -3px rgba(240, 180, 91, 0.75),
+        172px -76px 0 -3px rgba(116, 216, 227, 0.68),
+        0 0 22px rgba(240, 180, 91, 0.28);
+    }
+
+    .hero-route {
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      display: none;
+      pointer-events: none;
+    }
+
+    @keyframes routeDrift {
+      to { stroke-dashoffset: -76; }
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0 0 20px;
+      color: var(--gold);
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 40px;
+      height: 1px;
+      background: currentColor;
+    }
+
+    h1 {
+      max-width: 760px;
+      margin: 0;
+      font-family: var(--serif);
+      font-size: clamp(3.4rem, 7vw, 7.8rem);
+      font-weight: 500;
+      line-height: 0.92;
+    }
+
+    .lede {
+      max-width: 650px;
+      margin: 28px 0 0;
+      color: var(--muted);
+      font-size: clamp(1.05rem, 1.5vw, 1.28rem);
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 34px;
+    }
+
+    .button {
+      min-height: 46px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 11px 15px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      color: #fff;
+      text-decoration: none;
+      font-weight: 760;
+      background: rgba(8, 13, 15, 0.62);
+      backdrop-filter: blur(14px);
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.22);
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+    }
+
+    .button:hover {
+      color: #fff;
+      transform: translateY(-2px);
+      border-color: rgba(240, 180, 91, 0.72);
+      background: rgba(14, 21, 24, 0.8);
+    }
+
+    .button.primary {
+      color: #17100a;
+      border-color: rgba(240, 180, 91, 0.94);
+      background: linear-gradient(135deg, #fff1c7, #f0b45b 60%, #f06449);
+    }
+
+    .button.primary:hover {
+      color: #17100a;
+      background: linear-gradient(135deg, #fff6d9, #ffc76c 62%, #f27458);
+    }
+
+    .button svg {
+      width: 18px;
+      height: 18px;
+      flex: 0 0 auto;
+    }
+
+    .signal-flame {
+      position: relative;
+      width: 29px;
+      height: 32px;
+      flex: 0 0 auto;
+      display: inline-grid;
+      place-items: center;
+      transform-origin: 50% 92%;
+      filter:
+        drop-shadow(0 0 7px rgba(255, 224, 116, 0.94))
+        drop-shadow(0 0 18px rgba(240, 100, 73, 0.5))
+        drop-shadow(0 0 28px rgba(117, 230, 238, 0.2));
+      animation: flameBody 1.22s ease-in-out infinite;
+    }
+
+    .signal-flame svg {
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+      display: block;
+    }
+
+    .signal-flame path,
+    .signal-flame circle,
+    .signal-flame ellipse {
+      transform-box: fill-box;
+      transform-origin: center bottom;
+    }
+
+    .flame-halo {
+      animation: flameHalo 1.12s ease-in-out infinite;
+    }
+
+    .flame-stack {
+      transform-box: fill-box;
+      transform-origin: center bottom;
+      animation: flameStack 0.94s ease-in-out infinite;
+    }
+
+    .flame-outer {
+      animation: flameOuter 0.9s ease-in-out infinite;
+    }
+
+    .flame-left {
+      animation: flameLeft 0.68s ease-in-out infinite;
+    }
+
+    .flame-right {
+      animation: flameRight 0.82s ease-in-out infinite;
+    }
+
+    .flame-core {
+      animation: flameCore 0.58s ease-in-out infinite;
+    }
+
+    .flame-white {
+      animation: flameWhite 0.76s ease-in-out infinite;
+    }
+
+    .flame-spark {
+      opacity: 0;
+      transform-origin: center center;
+      animation: sparkRise 1.7s ease-out infinite;
+    }
+
+    .spark-two {
+      animation-delay: 0.42s;
+      animation-duration: 1.35s;
+    }
+
+    .spark-three {
+      animation-delay: 0.86s;
+      animation-duration: 1.55s;
+    }
+
+    @keyframes flameBody {
+      0%, 100% { transform: rotate(-1.5deg) scale(1); filter: drop-shadow(0 0 7px rgba(255, 224, 116, 0.92)) drop-shadow(0 0 17px rgba(240, 100, 73, 0.46)) drop-shadow(0 0 24px rgba(117, 230, 238, 0.16)); }
+      27% { transform: rotate(2.4deg) translateY(-1px) scaleX(0.97) scaleY(1.08); filter: drop-shadow(0 0 10px rgba(255, 234, 145, 1)) drop-shadow(0 0 24px rgba(240, 100, 73, 0.62)) drop-shadow(0 0 31px rgba(117, 230, 238, 0.2)); }
+      61% { transform: rotate(-3.2deg) scaleX(1.04) scaleY(0.96); filter: drop-shadow(0 0 5px rgba(255, 201, 89, 0.78)) drop-shadow(0 0 13px rgba(240, 100, 73, 0.38)) drop-shadow(0 0 20px rgba(117, 230, 238, 0.13)); }
+    }
+
+    @keyframes flameHalo {
+      0%, 100% { opacity: 0.6; transform: scale(0.88); }
+      42% { opacity: 0.95; transform: translateY(-1px) scale(1.12); }
+      70% { opacity: 0.72; transform: translateX(1px) scale(0.96); }
+    }
+
+    @keyframes flameStack {
+      0%, 100% { transform: rotate(-1deg) translateX(0); }
+      34% { transform: rotate(3deg) translateX(0.6px); }
+      67% { transform: rotate(-4deg) translateX(-0.7px); }
+    }
+
+    @keyframes flameOuter {
+      0%, 100% { opacity: 0.96; transform: scaleX(0.98) scaleY(1); }
+      35% { opacity: 1; transform: translateY(-1.3px) scaleX(0.88) scaleY(1.12); }
+      68% { opacity: 0.9; transform: translateX(0.9px) scaleX(1.07) scaleY(0.94); }
+    }
+
+    @keyframes flameLeft {
+      0%, 100% { opacity: 0.76; transform: rotate(-9deg) translateX(0) scaleY(0.9); }
+      46% { opacity: 1; transform: rotate(4deg) translate(-1.2px, -1.8px) scaleX(0.9) scaleY(1.18); }
+    }
+
+    @keyframes flameRight {
+      0%, 100% { opacity: 0.72; transform: rotate(8deg) translateX(0) scaleY(0.88); }
+      45% { opacity: 0.98; transform: rotate(-6deg) translate(1px, -1.3px) scaleX(0.86) scaleY(1.2); }
+    }
+
+    @keyframes flameCore {
+      0%, 100% { opacity: 0.96; transform: rotate(-5deg) scaleX(0.96) scaleY(1); }
+      44% { opacity: 1; transform: rotate(7deg) translateY(-1px) scaleX(0.82) scaleY(1.2); }
+      72% { opacity: 0.88; transform: rotate(-11deg) translateX(-0.6px) scaleX(1.04) scaleY(0.9); }
+    }
+
+    @keyframes flameWhite {
+      0%, 100% { opacity: 0.75; transform: translateY(0) scaleX(0.86) scaleY(0.94); }
+      50% { opacity: 1; transform: translateY(-1.4px) scaleX(0.64) scaleY(1.22); }
+    }
+
+    @keyframes sparkRise {
+      0% { opacity: 0; transform: translate3d(0, 0, 0) scale(0.7); }
+      16% { opacity: 0.95; }
+      55% { opacity: 0.7; }
+      100% { opacity: 0; transform: translate3d(var(--spark-x, 4px), -20px, 0) scale(0.22); }
+    }
+
+    .status-strip {
+      max-width: 660px;
+      margin-top: 38px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      border: 1px solid var(--line);
+      background: rgba(8, 13, 15, 0.58);
+      backdrop-filter: blur(18px);
+      box-shadow: var(--shadow);
+    }
+
+    .status-item {
+      padding: 14px 14px 13px;
+      border-left: 1px solid var(--line);
+    }
+
+    .status-item:first-child {
+      border-left: 0;
+    }
+
+    .status-item b {
+      display: block;
+      color: var(--paper);
+      font-size: 0.86rem;
+    }
+
+    .status-item span {
+      display: block;
+      margin-top: 4px;
+      color: var(--quiet);
+      font-family: var(--mono);
+      font-size: 0.7rem;
+    }
+
+    .field-terminal {
+      max-width: 660px;
+      margin-top: 14px;
+      overflow: hidden;
+      border: 1px solid rgba(116, 216, 227, 0.22);
+      border-radius: var(--radius);
+      background:
+        linear-gradient(180deg, rgba(116, 216, 227, 0.08), transparent),
+        rgba(4, 8, 9, 0.72);
+      box-shadow: 0 18px 54px rgba(0, 0, 0, 0.28);
+      backdrop-filter: blur(18px);
+      font-family: var(--mono);
+      cursor: text;
+    }
+
+    .field-terminal:focus-within {
+      border-color: rgba(240, 180, 91, 0.58);
+      box-shadow:
+        0 18px 54px rgba(0, 0, 0, 0.28),
+        0 0 0 1px rgba(240, 180, 91, 0.2);
+    }
+
+    .terminal-head {
+      min-height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 8px 12px;
+      border-bottom: 1px solid rgba(247, 242, 232, 0.12);
+      color: rgba(247, 242, 232, 0.62);
+      font-size: 0.68rem;
+      text-transform: uppercase;
+    }
+
+    .terminal-output {
+      display: grid;
+      gap: 7px;
+      padding: 12px;
+      max-height: 128px;
+      overflow: auto;
+      color: rgba(247, 242, 232, 0.72);
+      font-size: 0.72rem;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(116, 216, 227, 0.28) transparent;
+    }
+
+    .terminal-line {
+      margin: 0;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .terminal-line a {
+      color: var(--gold);
+      text-decoration: none;
+    }
+
+    .terminal-line a:hover {
+      text-decoration: underline;
+    }
+
+    .terminal-form {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px 12px;
+      border-top: 1px solid rgba(247, 242, 232, 0.1);
+      color: rgba(247, 242, 232, 0.82);
+      font-size: 0.72rem;
+    }
+
+    .terminal-prompt {
+      color: var(--gold);
+      flex: 0 0 auto;
+    }
+
+    .terminal-ok {
+      color: var(--cyan);
+    }
+
+    .terminal-muted {
+      color: rgba(247, 242, 232, 0.48);
+    }
+
+    .terminal-input {
+      flex: 1 1 auto;
+      min-width: 0;
+      border: 0;
+      outline: 0;
+      padding: 0;
+      color: var(--paper);
+      background: transparent;
+      font: inherit;
+      caret-color: var(--gold);
+    }
+
+    .terminal-input::placeholder {
+      color: rgba(247, 242, 232, 0.34);
+    }
+
+    .terminal-input:focus,
+    .terminal-input:focus-visible {
+      outline: 0;
+      outline-offset: 0;
+      border-radius: 0;
+    }
+
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+      clip-path: inset(50%);
+    }
+
+    .portal-wrap {
+      justify-self: end;
+      width: min(420px, 100%);
+      transform: translate3d(calc(var(--mx, 0) * 14px), calc(var(--my, 0) * 10px), 0);
+      transition: transform 180ms ease-out;
+    }
+
+    .portal {
+      position: relative;
+      aspect-ratio: 0.78;
+      padding: 12px;
+      border-radius: 999px 999px 30px 30px;
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.28), rgba(240, 180, 91, 0.08) 34%, rgba(116, 216, 227, 0.26)),
+        rgba(247, 242, 232, 0.06);
+      box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.18),
+        0 22px 70px rgba(0, 0, 0, 0.58),
+        0 0 60px rgba(240, 180, 91, 0.18);
+    }
+
+    .portal::before {
+      content: "";
+      position: absolute;
+      inset: -12px;
+      border: 1px solid rgba(240, 180, 91, 0.3);
+      border-radius: 999px 999px 38px 38px;
+      box-shadow: inset 0 0 38px rgba(116, 216, 227, 0.16);
+    }
+
+    .portal::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      bottom: -42px;
+      width: 74%;
+      height: 70px;
+      transform: translateX(-50%);
+      border-radius: 50%;
+      background: radial-gradient(ellipse at center, rgba(240, 180, 91, 0.28), transparent 70%);
+      filter: blur(16px);
+    }
+
+    .portrait-shell {
+      position: relative;
+      height: 100%;
+      overflow: hidden;
+      border-radius: 999px 999px 22px 22px;
+      background: #101719;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+    }
+
+    .portrait-shell img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: center;
+      filter: saturate(0.9) contrast(1.03) brightness(0.86);
+    }
+
+    .portrait-shell::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 73% 20%, rgba(240, 180, 91, 0.32), transparent 28%),
+        linear-gradient(180deg, transparent 52%, rgba(6, 9, 11, 0.42) 100%),
+        linear-gradient(90deg, rgba(6, 9, 11, 0.16), rgba(116, 216, 227, 0.12));
+      mix-blend-mode: screen;
+      pointer-events: none;
+    }
+
+    .portrait-shell::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      opacity: 0.16;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, 0.2) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.16) 1px, transparent 1px);
+      background-size: 14px 14px;
+      mix-blend-mode: overlay;
+    }
+
+    .portal-caption {
+      position: absolute;
+      left: 24px;
+      right: 24px;
+      bottom: 22px;
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding-top: 14px;
+      border-top: 1px solid rgba(247, 242, 232, 0.2);
+      color: rgba(255, 255, 255, 0.82);
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+    }
+
+    .scroll-cue {
+      position: absolute;
+      left: 50%;
+      bottom: 22px;
+      transform: translateX(-50%);
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--quiet);
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      text-decoration: none;
+    }
+
+    .scroll-cue::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-right: 1px solid currentColor;
+      border-bottom: 1px solid currentColor;
+      transform: rotate(45deg);
+    }
+
+    main {
+      background:
+        repeating-linear-gradient(115deg, rgba(247, 242, 232, 0.018) 0 1px, transparent 1px 88px),
+        linear-gradient(180deg, #050707, #0c1214 22%, #090d0f 100%);
+    }
+
+    .section {
+      position: relative;
+      padding: 92px 0;
+      overflow: hidden;
+      border-top: 1px solid var(--line);
+    }
+
+    .section::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.12;
+      background: var(--atlas-bg, none);
+      mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+    }
+
+    #field-notes {
+      --atlas-bg:
+        radial-gradient(ellipse at 18% 13%, transparent 0 118px, rgba(240, 180, 91, 0.24) 119px 120px, transparent 121px 185px, rgba(240, 180, 91, 0.12) 186px 187px, transparent 188px),
+        radial-gradient(ellipse at 74% 82%, transparent 0 150px, rgba(116, 216, 227, 0.2) 151px 152px, transparent 153px);
+    }
+
+    #systems {
+      --atlas-bg:
+        linear-gradient(116deg, transparent 0 23%, rgba(116, 216, 227, 0.2) 23.08% 23.18%, transparent 23.25% 49%, rgba(240, 180, 91, 0.18) 49.08% 49.18%, transparent 49.25%),
+        linear-gradient(64deg, transparent 0 38%, rgba(247, 242, 232, 0.14) 38.08% 38.16%, transparent 38.24%);
+    }
+
+    #artifacts {
+      --atlas-bg:
+        radial-gradient(ellipse at 47% 45%, transparent 0 240px, rgba(240, 180, 91, 0.18) 241px 242px, transparent 243px 360px, rgba(116, 216, 227, 0.12) 361px 362px, transparent 363px),
+        linear-gradient(148deg, transparent 0 45%, rgba(247, 242, 232, 0.12) 45.08% 45.18%, transparent 45.28%);
+    }
+
+    .container {
+      width: min(1180px, calc(100% - 40px));
+      margin: 0 auto;
+    }
+
+    .section-head {
+      display: grid;
+      grid-template-columns: 250px minmax(0, 1fr);
+      gap: 46px;
+      align-items: start;
+      margin-bottom: 38px;
+    }
+
+    .section-label {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--gold);
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+    }
+
+    .section-label::before {
+      content: "";
+      width: 32px;
+      height: 1px;
+      background: currentColor;
+    }
+
+    h2 {
+      margin: 0;
+      font-family: var(--serif);
+      font-size: clamp(2.1rem, 4.2vw, 4.4rem);
+      font-weight: 500;
+      line-height: 1.02;
+    }
+
+    .section-copy {
+      max-width: 740px;
+      margin: 18px 0 0;
+      color: var(--muted);
+      font-size: 1.08rem;
+    }
+
+    .field-grid {
+      position: relative;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 14px;
+      overflow: visible;
+    }
+
+    .field-grid::before {
+      content: "";
+      position: absolute;
+      left: 9%;
+      right: 9%;
+      top: 31px;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(116, 216, 227, 0.5), rgba(240, 180, 91, 0.42), transparent);
+      pointer-events: none;
+    }
+
+    .field-note {
+      position: relative;
+      min-height: 274px;
+      padding: 26px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background:
+        repeating-linear-gradient(90deg, rgba(247, 242, 232, 0.02) 0 1px, transparent 1px 38px),
+        repeating-linear-gradient(0deg, rgba(247, 242, 232, 0.015) 0 1px, transparent 1px 38px),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent),
+        rgba(14, 21, 24, 0.88);
+    }
+
+    .field-note::before {
+      content: "";
+      position: absolute;
+      top: 22px;
+      right: 22px;
+      width: 18px;
+      height: 18px;
+      border: 1px solid rgba(240, 180, 91, 0.58);
+      border-radius: 50%;
+      background: radial-gradient(circle, var(--gold) 0 2px, transparent 3px);
+      box-shadow: 0 0 22px rgba(240, 180, 91, 0.18);
+    }
+
+    .field-note::after {
+      content: attr(data-node) " / " attr(data-bearing);
+      position: absolute;
+      left: 26px;
+      bottom: 20px;
+      color: rgba(247, 242, 232, 0.38);
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      text-transform: uppercase;
+    }
+
+    .field-note h3 {
+      margin: 0;
+      color: var(--paper);
+      font-size: 1.24rem;
+    }
+
+    .field-note p {
+      margin: 14px 0 0;
+      color: var(--muted);
+    }
+
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 22px;
+      padding-bottom: 32px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 4px 8px;
+      border: 1px solid rgba(247, 242, 232, 0.16);
+      border-radius: 6px;
+      color: rgba(247, 242, 232, 0.62);
+      background: rgba(255, 255, 255, 0.03);
+      font-family: var(--mono);
+      font-size: 0.74rem;
+    }
+
+    .instrument-panel {
+      position: relative;
+      margin: -2px 0 18px;
+      padding: 18px;
+      display: grid;
+      grid-template-columns: 164px minmax(0, 1fr);
+      gap: 20px;
+      align-items: center;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background:
+        radial-gradient(circle at 22% 50%, rgba(240, 180, 91, 0.12), transparent 12rem),
+        linear-gradient(90deg, rgba(14, 21, 24, 0.92), rgba(14, 21, 24, 0.62));
+      box-shadow: var(--shadow);
+    }
+
+    .instrument-panel::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      opacity: 0.24;
+      background-image:
+        linear-gradient(rgba(247, 242, 232, 0.08) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(247, 242, 232, 0.06) 1px, transparent 1px);
+      background-size: 34px 34px;
+      mask-image: linear-gradient(90deg, transparent, #000 22%, transparent 100%);
+    }
+
+    .compass {
+      position: relative;
+      z-index: 1;
+      width: 142px;
+      aspect-ratio: 1;
+      border: 1px solid rgba(240, 180, 91, 0.48);
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 50% 50%, rgba(240, 180, 91, 0.22) 0 4px, transparent 5px),
+        radial-gradient(circle at 50% 50%, transparent 0 42px, rgba(247, 242, 232, 0.08) 43px 44px, transparent 45px),
+        radial-gradient(ellipse at 60% 30%, rgba(240, 180, 91, 0.18), transparent 42%),
+        radial-gradient(ellipse at 35% 72%, rgba(116, 216, 227, 0.14), transparent 38%),
+        conic-gradient(from -32deg, transparent 0deg, rgba(240, 180, 91, 0.14) 42deg, transparent 82deg, rgba(147, 196, 125, 0.12) 158deg, transparent 198deg, rgba(116, 216, 227, 0.12) 286deg, transparent 332deg, transparent 360deg);
+      box-shadow:
+        inset 0 0 24px rgba(0, 0, 0, 0.38),
+        0 0 28px rgba(240, 180, 91, 0.12);
+    }
+
+    .compass::before,
+    .compass::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      z-index: 1;
+      transform-origin: 50% 100%;
+      border-radius: 999px;
+    }
+
+    .compass::before {
+      width: 5px;
+      height: 55px;
+      transform: translate(-50%, -100%) rotate(35deg);
+      background: linear-gradient(180deg, var(--red), var(--gold));
+      box-shadow: 0 0 18px rgba(240, 180, 91, 0.36);
+    }
+
+    .compass::after {
+      width: 4px;
+      height: 45px;
+      transform-origin: 50% 0%;
+      transform: translate(-50%, 0) rotate(35deg);
+      background: rgba(116, 216, 227, 0.58);
+    }
+
+    .compass span {
+      position: absolute;
+      z-index: 2;
+      color: rgba(247, 242, 232, 0.58);
+      font-family: var(--mono);
+      font-size: 0.7rem;
+    }
+
+    .compass .n { left: 50%; top: 10px; transform: translateX(-50%); color: var(--gold); }
+    .compass .e { right: 12px; top: 50%; transform: translateY(-50%); }
+    .compass .s { left: 50%; bottom: 9px; transform: translateX(-50%); }
+    .compass .w { left: 12px; top: 50%; transform: translateY(-50%); }
+
+    .instrument-copy {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(220px, 0.72fr);
+      gap: 24px;
+      align-items: center;
+    }
+
+    .instrument-copy h3 {
+      margin: 0;
+      color: var(--paper);
+      font-size: 1.18rem;
+    }
+
+    .instrument-copy p {
+      margin: 8px 0 0;
+      color: var(--muted);
+    }
+
+    .bearing-list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      color: var(--quiet);
+    }
+
+    .bearing-list li {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid rgba(247, 242, 232, 0.12);
+      padding-bottom: 8px;
+    }
+
+    .bearing-list b {
+      color: var(--gold);
+      font-weight: 600;
+    }
+
+    .timeline {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 18px;
+      padding: 22px 0 8px;
+    }
+
+    .timeline::before {
+      content: "";
+      position: absolute;
+      left: 7%;
+      right: 7%;
+      top: 50%;
+      height: 1px;
+      transform: translateY(-50%);
+      background: linear-gradient(90deg, transparent, rgba(240, 180, 91, 0.42), rgba(116, 216, 227, 0.3), transparent);
+    }
+
+    .timeline::after {
+      content: "route / production";
+      position: absolute;
+      right: 0;
+      top: -4px;
+      color: rgba(247, 242, 232, 0.34);
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      text-transform: uppercase;
+    }
+
+    .timeline-row {
+      position: relative;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      min-height: 214px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent),
+        rgba(14, 21, 24, 0.78);
+      box-shadow: 0 20px 58px rgba(0, 0, 0, 0.24);
+    }
+
+    .timeline-row::before {
+      content: attr(data-node);
+      position: absolute;
+      right: 18px;
+      top: 16px;
+      color: rgba(240, 180, 91, 0.74);
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      text-transform: uppercase;
+    }
+
+    .timeline-row::after {
+      content: "";
+      position: absolute;
+      left: 22px;
+      bottom: 20px;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--cyan);
+      box-shadow: 0 0 22px rgba(116, 216, 227, 0.42);
+    }
+
+    .timeline-row:nth-child(1) {
+      grid-column: 1 / 8;
+    }
+
+    .timeline-row:nth-child(2) {
+      grid-column: 7 / 13;
+      transform: translateY(56px);
+    }
+
+    .timeline-row:nth-child(3) {
+      grid-column: 2 / 8;
+      transform: translateY(-18px);
+    }
+
+    .timeline-row:nth-child(4) {
+      grid-column: 6 / 12;
+      transform: translateY(36px);
+    }
+
+    .time {
+      color: var(--quiet);
+      font-family: var(--mono);
+      font-size: 0.8rem;
+    }
+
+    .timeline-row h3 {
+      margin: 0;
+      font-size: 1.2rem;
+      color: var(--paper);
+    }
+
+    .timeline-row p {
+      max-width: 820px;
+      margin: 10px 0 0;
+      color: var(--muted);
+    }
+
+    .artifact-grid {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 14px;
+    }
+
+    .artifact-grid::before {
+      content: "";
+      position: absolute;
+      inset: 28px 7% 34px;
+      pointer-events: none;
+      border: 1px dashed rgba(247, 242, 232, 0.14);
+      border-radius: 52% 48% 48% 52%;
+      transform: rotate(-2deg);
+    }
+
+    .artifact {
+      position: relative;
+      min-height: 235px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      color: var(--ink);
+      text-decoration: none;
+      background:
+        radial-gradient(circle at 20% 0%, rgba(240, 180, 91, 0.12), transparent 15rem),
+        rgba(14, 21, 24, 0.76);
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+    }
+
+    .artifact::before {
+      content: attr(data-code);
+      position: absolute;
+      right: 18px;
+      top: 16px;
+      color: rgba(247, 242, 232, 0.34);
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      text-transform: uppercase;
+    }
+
+    .artifact:nth-child(1) {
+      grid-column: 1 / 7;
+    }
+
+    .artifact:nth-child(2) {
+      grid-column: 7 / 13;
+    }
+
+    .artifact:nth-child(3) {
+      grid-column: 2 / 6;
+    }
+
+    .artifact:nth-child(4) {
+      grid-column: 6 / 12;
+      transform: translateY(24px);
+    }
+
+    .artifact:hover {
+      color: var(--ink);
+      transform: translateY(-3px);
+      border-color: rgba(240, 180, 91, 0.6);
+      background:
+        radial-gradient(circle at 20% 0%, rgba(240, 180, 91, 0.18), transparent 15rem),
+        rgba(14, 21, 24, 0.92);
+    }
+
+    .artifact:nth-child(4):hover {
+      transform: translateY(20px);
+    }
+
+    .artifact-marker {
+      width: 44px;
+      height: 6px;
+      margin-bottom: 28px;
+      border-radius: 3px;
+      background: var(--cyan);
+    }
+
+    .artifact:nth-child(2) .artifact-marker { background: var(--gold); }
+    .artifact:nth-child(3) .artifact-marker { background: var(--green); }
+    .artifact:nth-child(4) .artifact-marker { background: var(--red); }
+
+    .artifact h3 {
+      margin: 0;
+      color: var(--paper);
+      font-size: 1.18rem;
+    }
+
+    .artifact p {
+      margin: 13px 0 0;
+      color: var(--muted);
+    }
+
+    .artifact span {
+      margin-top: auto;
+      color: var(--gold);
+      font-weight: 800;
+    }
+
+    .contact {
+      position: relative;
+      padding: 92px 0 0;
+      overflow: hidden;
+      border-top: 1px solid var(--line);
+      background:
+        radial-gradient(circle at 76% 18%, rgba(116, 216, 227, 0.12), transparent 28rem),
+        #050707;
+    }
+
+    .contact-grid {
+      display: grid;
+      grid-template-columns: 1fr 0.86fr;
+      gap: 54px;
+      align-items: start;
+    }
+
+    .contact-links {
+      display: grid;
+      gap: 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .contact-link {
+      min-height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 16px 0;
+      border-bottom: 1px solid var(--line);
+      color: var(--paper);
+      text-decoration: none;
+      font-weight: 780;
+    }
+
+    .contact-link:hover {
+      color: var(--gold);
+    }
+
+    .contact-link small {
+      color: var(--quiet);
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      font-weight: 500;
+      text-align: right;
+    }
+
+    .footer {
+      margin-top: 72px;
+      padding-top: 24px;
+      border-top: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      color: var(--quiet);
+      font-size: 0.9rem;
+    }
+
+    .footer a {
+      color: var(--muted);
+      text-decoration: none;
+    }
+
+    .footer a:hover {
+      color: var(--gold);
+    }
+
+    .garden-band {
+      position: relative;
+      width: 100vw;
+      height: 136px;
+      margin-top: 28px;
+      margin-left: calc(50% - 50vw);
+      margin-right: calc(50% - 50vw);
+      overflow: hidden;
+      background: #050707;
+    }
+
+    .garden-band::before,
+    .garden-band::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+    }
+
+    .garden-band::before {
+      background: url("./images/garden-meadow.jpg") center 38% / cover no-repeat;
+      filter: saturate(0.9) brightness(0.86) contrast(1.05);
+      transform: scale(1.01);
+    }
+
+    .garden-band::after {
+      background:
+        linear-gradient(180deg, rgba(5, 7, 7, 1) 0%, rgba(5, 7, 7, 0.82) 16%, rgba(5, 7, 7, 0.22) 58%, rgba(5, 7, 7, 0.1) 100%),
+        linear-gradient(90deg, rgba(5, 7, 7, 0.72), rgba(5, 7, 7, 0.08) 18%, rgba(5, 7, 7, 0.08) 82%, rgba(5, 7, 7, 0.72)),
+        radial-gradient(ellipse at 50% 100%, rgba(147, 196, 125, 0.18), transparent 68%);
+    }
+
+    :focus-visible {
+      outline: 3px solid var(--gold);
+      outline-offset: 3px;
+      border-radius: 5px;
+    }
+
+    @media (max-width: 980px) {
+      .scene-bg {
+        object-position: 58% center;
+      }
+
+      .atlas-rail {
+        display: none;
+      }
+
+      .hero {
+        grid-template-columns: 1fr;
+        padding-top: 42px;
+      }
+
+      .hero-scope {
+        opacity: 0.46;
+      }
+
+      .hero-route {
+        opacity: 0.35;
+      }
+
+      .portal-wrap {
+        justify-self: start;
+        width: min(360px, 88vw);
+      }
+
+      .status-strip,
+      .field-grid,
+      .instrument-copy,
+      .contact-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .timeline,
+      .artifact-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .timeline::before,
+      .artifact-grid::before {
+        display: none;
+      }
+
+      .timeline-row,
+      .timeline-row:nth-child(n),
+      .artifact,
+      .artifact:nth-child(n) {
+        grid-column: auto;
+        transform: none;
+      }
+
+      .section-head,
+      .timeline-row {
+        grid-template-columns: 1fr;
+        gap: 18px;
+      }
+    }
+
+    @media (max-width: 680px) {
+      .topbar {
+        width: min(100% - 28px, 1180px);
+        flex-direction: column;
+        align-items: stretch;
+        gap: 14px;
+      }
+
+      .nav {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .nav a {
+        padding: 8px 4px;
+        font-size: 0.8rem;
+        background: rgba(8, 13, 15, 0.48);
+      }
+
+      .hero,
+      .container {
+        width: min(100% - 28px, 1180px);
+      }
+
+      .hero {
+        min-height: calc(100svh - 116px);
+        padding: 50px 0 92px;
+        gap: 40px;
+      }
+
+      .scene::before {
+        background:
+          linear-gradient(90deg, rgba(4, 7, 9, 0.96), rgba(4, 7, 9, 0.72)),
+          linear-gradient(180deg, rgba(4, 7, 9, 0.28), rgba(4, 7, 9, 0.9));
+      }
+
+      .scene::after {
+        background-size: 48px 48px;
+      }
+
+      .edge-growth {
+        width: 72px;
+        opacity: 0.18;
+      }
+
+      .status-strip,
+      .field-grid,
+      .instrument-panel,
+      .instrument-copy,
+      .contact-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .timeline,
+      .artifact-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-route,
+      .hero-scope {
+        display: none;
+      }
+
+      .instrument-panel {
+        padding: 14px;
+      }
+
+      .compass {
+        width: 118px;
+      }
+
+      .status-item,
+      .status-item:first-child {
+        border-left: 0;
+        border-top: 1px solid var(--line);
+      }
+
+      .status-item:first-child {
+        border-top: 0;
+      }
+
+      .section,
+      .contact {
+        padding-top: 64px;
+      }
+
+      .portal {
+        aspect-ratio: 0.86;
+      }
+
+      .scroll-cue {
+        display: none;
+      }
+
+      .footer {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html {
+        scroll-behavior: auto;
+      }
+
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.001ms !important;
+        transition-duration: 0.001ms !important;
+      }
+
+      .scene-bg,
+      .portal-wrap {
+        transform: none;
+      }
+
+      .signal-flame,
+      .signal-flame::before,
+      .signal-flame::after,
+      .signal-flame *,
+      .flame-spark {
+        animation: none;
+      }
+    }
+  </style>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Person",
+    "name": "Ignat Remizov",
+    "jobTitle": "CTO",
+    "url": "https://ignatremizov.com/",
+    "sameAs": [
+      "https://github.com/ignatremizov",
+      "https://www.linkedin.com/in/ignatremizov/",
+      "https://linktr.ee/ignatremizov"
+    ]
+  }
+  </script>
+</head>
+
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="edge-growth left" aria-hidden="true"></div>
+  <div class="edge-growth right" aria-hidden="true"></div>
+  <nav class="atlas-rail" aria-label="Page route">
+    <a class="route-link" href="#top" data-route-link>00</a>
+    <a class="route-link" href="#field-notes" data-route-link>01</a>
+    <a class="route-link" href="#systems" data-route-link>02</a>
+    <a class="route-link" href="#artifacts" data-route-link>03</a>
+    <a class="route-link" href="#contact" data-route-link>04</a>
+  </nav>
+
+  <header class="scene" id="top">
+    <img class="scene-bg" src="./images/field-arch-hero.jpg" alt="A twilight coastal field with wildflowers, an ancient stone arch, stars, and Mediterranean water" />
+    <div class="meteor-layer" aria-hidden="true">
+      <span class="meteor"></span>
+      <span class="meteor"></span>
+      <span class="meteor"></span>
+      <span class="meteor"></span>
+      <span class="meteor"></span>
+    </div>
+
+    <nav class="topbar" aria-label="Primary">
+      <a class="brand" href="#top">
+        <span class="sigil"><span>IR</span></span>
+        <span>
+          <strong>Ignat Remizov</strong>
+          <small>systems under strange skies</small>
+        </span>
+      </a>
+
+      <div class="nav">
+        <a href="#field-notes">Notes</a>
+        <a href="#systems">Systems</a>
+        <a href="#artifacts">Artifacts</a>
+        <a href="#contact">Contact</a>
+      </div>
+    </nav>
+
+    <div class="hero">
+      <div class="hero-scope" aria-hidden="true"></div>
+      <div>
+        <p class="eyebrow">CTO / fintech / field terminal</p>
+        <h1>Readable systems for complex work.</h1>
+        <p class="lede">
+          I build payment, compliance, onboarding, and platform systems that remain legible
+          after launch. Serious infrastructure, with enough wonder left in it to keep moving.
+        </p>
+
+        <div class="hero-actions">
+          <a class="button primary" href="mailto:ignat@ignatremizov.com">
+            <span class="signal-flame" aria-hidden="true">
+              <svg viewBox="0 0 36 42" focusable="false">
+                <defs>
+                  <radialGradient id="signal-flame-halo" cx="50%" cy="63%" r="58%">
+                    <stop offset="0%" stop-color="#fff6ba" stop-opacity="0.88" />
+                    <stop offset="44%" stop-color="#ffb44f" stop-opacity="0.58" />
+                    <stop offset="100%" stop-color="#f06449" stop-opacity="0" />
+                  </radialGradient>
+                  <linearGradient id="signal-flame-outer" x1="11" y1="2" x2="27" y2="38" gradientUnits="userSpaceOnUse">
+                    <stop offset="0%" stop-color="#fff4ad" />
+                    <stop offset="32%" stop-color="#ffbe56" />
+                    <stop offset="68%" stop-color="#ff7045" />
+                    <stop offset="100%" stop-color="#b93628" />
+                  </linearGradient>
+                  <linearGradient id="signal-flame-core" x1="14" y1="16" x2="20" y2="37" gradientUnits="userSpaceOnUse">
+                    <stop offset="0%" stop-color="#ffffff" />
+                    <stop offset="46%" stop-color="#ffe889" />
+                    <stop offset="100%" stop-color="#f0b45b" />
+                  </linearGradient>
+                  <filter id="signal-flame-bloom" x="-55%" y="-45%" width="210%" height="195%">
+                    <feGaussianBlur in="SourceGraphic" stdDeviation="1.25" result="blur" />
+                    <feColorMatrix in="blur" type="matrix" values="1 0 0 0 0.98  0 1 0 0 0.48  0 0 1 0 0.18  0 0 0 1 0" result="warm" />
+                    <feMerge>
+                      <feMergeNode in="warm" />
+                      <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                  </filter>
+                </defs>
+                <ellipse class="flame-halo" cx="18" cy="27" rx="16" ry="14" fill="url(#signal-flame-halo)" />
+                <circle class="flame-spark spark-one" cx="9.4" cy="19" r="1.4" fill="#fff2a6" style="--spark-x: -6px" />
+                <circle class="flame-spark spark-two" cx="27.4" cy="21" r="1.2" fill="#ffd06b" style="--spark-x: 6px" />
+                <circle class="flame-spark spark-three" cx="20.6" cy="15" r="1" fill="#fff8c8" style="--spark-x: 2px" />
+                <g class="flame-stack" filter="url(#signal-flame-bloom)">
+                  <path class="flame-outer" fill="url(#signal-flame-outer)" d="M18.1 2.4C22.8 9.2 30.6 15.2 30 25.1C29.5 34.2 23.6 39.2 17.6 39.2C10.2 39.2 5.7 33.4 6.4 26.3C7 20.7 10.8 17.3 12.4 13.6C14 9.8 13.1 6.3 10.8 3.1C14.4 4.8 16.8 7.3 18.1 2.4Z" />
+                  <path class="flame-left" fill="#ff9e45" d="M13.1 16.1C9.7 20.3 9.2 25.2 11.4 30.2C12.8 33.4 15.6 35.5 18.4 36.2C15.1 31.9 15.1 28.5 17.7 23.8C15 24.6 13.6 22.1 13.1 16.1Z" />
+                  <path class="flame-right" fill="#f06449" d="M22.2 11.4C25.6 16.4 26.5 22.8 23.4 28.1C21.4 31.7 20 33.9 20.5 37C25.3 35.1 28.5 30.2 28 24.1C27.6 18.8 24.8 15.4 22.2 11.4Z" />
+                  <path class="flame-core" fill="url(#signal-flame-core)" d="M18.2 14.7C21.5 20.2 22.7 25.6 20.3 30.8C18.8 34 16.6 36.2 14.7 36.8C15.4 32.8 13.2 30.4 13.1 27C13 22.3 16.5 19.5 18.2 14.7Z" />
+                  <path class="flame-white" fill="#fffbd3" d="M17.5 22C19.4 25.4 19.8 29 18.2 31.8C17.1 33.8 15.8 35.1 14.5 35.4C15 32.8 14 31.3 14.2 28.9C14.5 25.9 16.3 24.2 17.5 22Z" />
+                </g>
+                <path class="flame-ember" fill="none" stroke="#432318" stroke-width="3" stroke-linecap="round" d="M9.9 38.4C14.4 40.1 21.8 40.1 26.2 38.4" />
+              </svg>
+            </span>
+            Send signal
+          </a>
+          <a class="button" href="https://github.com/ignatremizov" target="_blank" rel="noreferrer noopener">GitHub</a>
+          <a class="button" href="https://www.linkedin.com/in/ignatremizov/" target="_blank" rel="noreferrer noopener">LinkedIn</a>
+        </div>
+
+        <div class="status-strip" aria-label="Quick facts">
+          <div class="status-item">
+            <b>Current post</b>
+            <span>Executive Director and CTO</span>
+          </div>
+          <div class="status-item">
+            <b>Base</b>
+            <span>Limassol, Cyprus</span>
+          </div>
+          <div class="status-item">
+            <b>Domains</b>
+            <span>payments / risk / cloud</span>
+          </div>
+        </div>
+
+        <div class="field-terminal" aria-label="Field terminal">
+          <div class="terminal-head">
+            <span id="terminal-path">~/field</span>
+            <span>type help</span>
+          </div>
+          <div class="terminal-output" id="terminal-output" aria-live="polite">
+            <p class="terminal-line"><span class="terminal-ok">field terminal online</span></p>
+            <p class="terminal-line terminal-muted">try: ls, cat work, ritual, help; press Tab for tools</p>
+          </div>
+          <form class="terminal-form" id="terminal-form" autocomplete="off">
+            <label class="visually-hidden" for="terminal-input">Terminal command</label>
+            <span class="terminal-prompt" aria-hidden="true">$</span>
+            <input class="terminal-input" id="terminal-input" name="command" type="text" spellcheck="false" autocapitalize="none" placeholder="ls" />
+          </form>
+        </div>
+      </div>
+
+      <div class="portal-wrap" aria-label="Portrait portal">
+        <div class="portal">
+          <div class="portrait-shell">
+            <img src="./images/ignat-forward-portrait.jpg" alt="Ignat Remizov looking toward the horizon at sunset" />
+            <div class="portal-caption">
+              <span>future-facing</span>
+              <span>Europe/Nicosia</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <a class="scroll-cue" href="#main">enter field log</a>
+  </header>
+
+  <main id="main">
+    <section class="section" id="field-notes" aria-labelledby="notes-title">
+      <div class="container">
+        <div class="section-head">
+          <div class="section-label">Field notes</div>
+          <div>
+            <h2 id="notes-title">The job is to make the path visible.</h2>
+            <p class="section-copy">
+              I like systems that explain themselves: clean contracts, observable flows,
+              auditable decisions, and interfaces that help people act without guessing.
+            </p>
+          </div>
+        </div>
+
+        <div class="instrument-panel" aria-label="Field compass">
+          <div class="compass" aria-hidden="true">
+            <span class="n">N</span>
+            <span class="e">E</span>
+            <span class="s">S</span>
+            <span class="w">W</span>
+          </div>
+          <div class="instrument-copy">
+            <div>
+              <h3>Working bearing: useful, legible, durable.</h3>
+              <p>
+                The compass is not decoration so much as a reminder: the system should help
+                people find the next correct move.
+              </p>
+            </div>
+            <ul class="bearing-list">
+              <li><span>signal</span><b>clear</b></li>
+              <li><span>risk</span><b>visible</b></li>
+              <li><span>handoff</span><b>survivable</b></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="field-grid">
+          <article class="field-note" data-node="N01" data-bearing="contracts">
+            <h3>Clarity over cleverness</h3>
+            <p>
+              The best architecture is easy to inspect. I prefer boring foundations,
+              precise boundaries, and documentation that survives handoff.
+            </p>
+            <div class="chip-row">
+              <span class="chip">contracts</span>
+              <span class="chip">docs</span>
+              <span class="chip">debuggability</span>
+            </div>
+          </article>
+
+          <article class="field-note" data-node="N02" data-bearing="risk">
+            <h3>Systems with accountability</h3>
+            <p>
+              Regulated products need more than happy paths: permissions, audit trails,
+              monitoring, operational escape hatches, and traceable decisions.
+            </p>
+            <div class="chip-row">
+              <span class="chip">KYC</span>
+              <span class="chip">risk</span>
+              <span class="chip">governance</span>
+            </div>
+          </article>
+
+          <article class="field-note" data-node="N03" data-bearing="artifacts">
+            <h3>Creative technical range</h3>
+            <p>
+              I keep creative work close to engineering: writing, audio, experiments,
+              and small tools that make the internet feel less standardized.
+            </p>
+            <div class="chip-row">
+              <span class="chip">writing</span>
+              <span class="chip">music</span>
+              <span class="chip">artifacts</span>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="systems" aria-labelledby="systems-title">
+      <div class="container">
+        <div class="section-head">
+          <div class="section-label">Systems</div>
+          <div>
+            <h2 id="systems-title">Production work, not just prototypes.</h2>
+            <p class="section-copy">
+              A compact map of where I have spent most of my engineering attention.
+            </p>
+          </div>
+        </div>
+
+        <div class="timeline">
+          <article class="timeline-row" data-node="sys-01">
+            <div class="time">2024 - present / Zolvat</div>
+            <div>
+              <h3>Executive Director and CTO</h3>
+              <p>
+                Leading engineering and technical operations across onboarding, KYC,
+                transaction monitoring, payment processing, security, observability,
+                and governance for a fintech platform.
+              </p>
+            </div>
+          </article>
+
+          <article class="timeline-row" data-node="sys-02">
+            <div class="time">2022 - 2024 / consulting</div>
+            <div>
+              <h3>Software architect and security consultant</h3>
+              <p>
+                Designed product architecture, internal controls, policies, and delivery
+                workflows for teams building fintech, web, and operational systems.
+              </p>
+            </div>
+          </article>
+
+          <article class="timeline-row" data-node="sys-03">
+            <div class="time">2021 - 2022 / IPONWEB</div>
+            <div>
+              <h3>Backend developer, real-time bidding systems</h3>
+              <p>
+                Worked on low-latency Lua services for programmatic advertising, with
+                emphasis on throughput, cost reduction, privacy, and production visibility.
+              </p>
+            </div>
+          </article>
+
+          <article class="timeline-row" data-node="sys-04">
+            <div class="time">2016 - 2021 / freelance</div>
+            <div>
+              <h3>Full-cycle web and product engineering</h3>
+              <p>
+                Built web, mobile, and commerce projects end to end: scope, build,
+                launch, payments, shipping integrations, SEO, and maintenance.
+              </p>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="artifacts" aria-labelledby="artifacts-title">
+      <div class="container">
+        <div class="section-head">
+          <div class="section-label">Artifacts</div>
+          <div>
+            <h2 id="artifacts-title">Public traces and private-heavy work.</h2>
+            <p class="section-copy">
+              The serious fintech work is mostly private, so this points to public surfaces
+              and older side projects that show the breadth around the core.
+            </p>
+          </div>
+        </div>
+
+        <div class="artifact-grid">
+          <a class="artifact" data-code="a01 / live" href="https://zolvat.com" target="_blank" rel="noreferrer noopener">
+            <span class="artifact-marker"></span>
+            <h3>Zolvat platform</h3>
+            <p>Payment operations, onboarding, monitoring, and internal tooling for regulated financial work.</p>
+            <span>Visit Zolvat</span>
+          </a>
+
+          <a class="artifact" data-code="a02 / archive" href="https://github.com/ignatremizov" target="_blank" rel="noreferrer noopener">
+            <span class="artifact-marker"></span>
+            <h3>Code archive</h3>
+            <p>Repositories, experiments, utilities, and older projects that escaped the private-work gravity well.</p>
+            <span>Open GitHub</span>
+          </a>
+
+          <a class="artifact" data-code="a03 / signal" href="https://linktr.ee/ignatremizov" target="_blank" rel="noreferrer noopener">
+            <span class="artifact-marker"></span>
+            <h3>Creative links</h3>
+            <p>Writing, audio, social links, and other personal output collected in one practical place.</p>
+            <span>Open Linktree</span>
+          </a>
+
+          <a class="artifact" data-code="a04 / oddity" href="./improv-games.html">
+            <span class="artifact-marker"></span>
+            <h3>Improv games</h3>
+            <p>A small legacy artifact from this site: simple, odd, and still part of the archive.</p>
+            <span>Open project</span>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <section class="contact" id="contact" aria-labelledby="contact-title">
+      <div class="container">
+        <div class="contact-grid">
+          <div>
+            <div class="section-label">Contact</div>
+            <h2 id="contact-title">Send a clear signal.</h2>
+            <p class="section-copy">
+              Email is the cleanest route. LinkedIn works for professional context.
+              Linktree holds the scattered creative and social surfaces.
+            </p>
+          </div>
+
+          <div class="contact-links" aria-label="Contact links">
+            <a class="contact-link" href="mailto:ignat@ignatremizov.com">
+              ignat@ignatremizov.com
+              <small>personal</small>
+            </a>
+            <a class="contact-link" href="mailto:iremizov@zolvat.com">
+              iremizov@zolvat.com
+              <small>Zolvat</small>
+            </a>
+            <a class="contact-link" href="https://www.linkedin.com/in/ignatremizov/" target="_blank" rel="noreferrer noopener">
+              LinkedIn
+              <small>professional</small>
+            </a>
+            <a class="contact-link" href="https://linktr.ee/ignatremizov" target="_blank" rel="noreferrer noopener">
+              Linktree
+              <small>socials and creative work</small>
+            </a>
+          </div>
+        </div>
+
+        <footer class="footer">
+          <span>&copy; <span id="year">2026</span> Ignat Remizov. Static page, no tracking.</span>
+          <a href="#top">Back to top</a>
+        </footer>
+
+        <div class="garden-band" aria-hidden="true"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    document.getElementById("year").textContent = String(new Date().getFullYear());
+
+    const root = document.documentElement;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const terminal = document.querySelector(".field-terminal");
+    const terminalForm = document.getElementById("terminal-form");
+    const terminalInput = document.getElementById("terminal-input");
+    const terminalOutput = document.getElementById("terminal-output");
+    const terminalPath = document.getElementById("terminal-path");
+    const routeLinks = Array.from(document.querySelectorAll("[data-route-link]"));
+    const routeTargets = routeLinks
+      .map((link) => document.querySelector(link.getAttribute("href")))
+      .filter(Boolean);
+    const links = {
+      github: "https://github.com/ignatremizov",
+      linkedin: "https://www.linkedin.com/in/ignatremizov/",
+      linktree: "https://linktr.ee/ignatremizov",
+      zolvat: "https://zolvat.com",
+      email: "mailto:ignat@ignatremizov.com"
+    };
+    const files = {
+      "/work": [
+        "Zolvat platform: payment operations, onboarding, monitoring, and internal tooling for regulated financial work.",
+        "Older archive: web, product, commerce, writing, audio, and small internet artifacts."
+      ],
+      "/notes": [
+        "Useful, legible, durable.",
+        "Clean contracts. Observable flows. Auditable decisions. Interfaces that help people act without guessing."
+      ],
+      "/contact": [
+        "ignat@ignatremizov.com",
+        "iremizov@zolvat.com",
+        "linkedin: open linkedin",
+        "linktree: open linktree"
+      ]
+    };
+    const dirs = {
+      "/": ["work", "notes", "contact", "links/"],
+      "/links": Object.keys(links)
+    };
+    let cwd = "/";
+    let commandHistory = [];
+    let historyIndex = 0;
+    const commandNames = [
+      "ls", "ll", "dir", "tree", "cat", "cd", "pwd", "whoami", "contact", "links",
+      "open", "history", "echo", "date", "clear", "tools", "help", "map", "ritual"
+    ];
+
+    const normalizePath = (value = "") => {
+      const raw = value.trim();
+      if (!raw || raw === ".") return cwd;
+      const base = raw.startsWith("/") || raw.startsWith("~") ? [] : cwd.split("/");
+      const parts = raw.replace(/^~\/?/, "/").split("/");
+      for (const part of parts) {
+        if (!part || part === ".") continue;
+        if (part === "..") base.pop();
+        else base.push(part);
+      }
+      const normalized = `/${base.filter(Boolean).join("/")}`;
+      return normalized === "/" ? "/" : normalized.replace(/\/+$/, "");
+    };
+
+    const updateTerminalPath = () => {
+      terminalPath.textContent = cwd === "/" ? "~" : `~${cwd}`;
+    };
+
+    const appendLine = (text, className = "") => {
+      const line = document.createElement("p");
+      line.className = `terminal-line${className ? ` ${className}` : ""}`;
+      line.textContent = text;
+      terminalOutput.append(line);
+      terminalOutput.scrollTop = terminalOutput.scrollHeight;
+    };
+
+    const appendLinkLine = (label, href) => {
+      const line = document.createElement("p");
+      const anchor = document.createElement("a");
+      line.className = "terminal-line";
+      anchor.href = href;
+      anchor.textContent = label;
+      if (!href.startsWith("mailto:")) {
+        anchor.target = "_blank";
+        anchor.rel = "noreferrer noopener";
+      }
+      line.append(anchor);
+      terminalOutput.append(line);
+      terminalOutput.scrollTop = terminalOutput.scrollHeight;
+    };
+
+    const printHelp = () => {
+      appendLine(`tools: ${commandNames.join(", ")}`, "terminal-muted");
+      appendLine("examples: ls -la /links   cat notes   open github", "terminal-muted");
+      appendLine("press Tab on an empty prompt to list tools; type a prefix and press Tab to complete", "terminal-muted");
+    };
+
+    const printLs = (args = []) => {
+      const target = args.find((part) => !part.startsWith("-")) || "";
+      const path = normalizePath(target);
+      if (dirs[path]) appendLine(dirs[path].join("  "));
+      else if (files[path]) appendLine(path.split("/").pop());
+      else if (links[path.replace(/^\/links\//, "")]) appendLine(path.split("/").pop());
+      else appendLine(`ls: ${target || path}: no such file or directory`, "terminal-muted");
+    };
+
+    const printCat = (target = "") => {
+      if (!target) {
+        appendLine("cat: missing file operand", "terminal-muted");
+        return;
+      }
+      const path = normalizePath(target);
+      const linkName = path.replace(/^\/links\//, "");
+      if (files[path]) files[path].forEach((line) => appendLine(line));
+      else if (links[linkName]) appendLine(links[linkName]);
+      else appendLine(`cat: ${target}: no such file`, "terminal-muted");
+    };
+
+    const runCommand = (rawValue) => {
+      const raw = rawValue.trim();
+      if (!raw) return;
+      appendLine(`$ ${raw}`, "terminal-muted");
+      const [command, ...rest] = raw.split(/\s+/);
+      const arg = rest.join(" ");
+
+      switch (command.toLowerCase()) {
+        case "help":
+        case "?":
+          printHelp();
+          break;
+        case "tools":
+          appendLine(commandNames.join("  "));
+          break;
+        case "ls":
+        case "ll":
+        case "dir":
+          printLs(rest);
+          break;
+        case "cat":
+          printCat(arg);
+          break;
+        case "cd": {
+          const next = normalizePath(arg || "/");
+          if (dirs[next]) {
+            cwd = next;
+            updateTerminalPath();
+          } else {
+            appendLine(`cd: ${arg || "/"}: not a directory`, "terminal-muted");
+          }
+          break;
+        }
+        case "pwd":
+          appendLine(cwd);
+          break;
+        case "tree":
+          appendLine(".");
+          appendLine("|-- work");
+          appendLine("|-- notes");
+          appendLine("|-- contact");
+          appendLine("`-- links/");
+          appendLine("    |-- github");
+          appendLine("    |-- linkedin");
+          appendLine("    |-- linktree");
+          appendLine("    |-- zolvat");
+          appendLine("    `-- email");
+          break;
+        case "map":
+          appendLine("00 top          / hero signal");
+          appendLine("01 field-notes  / compass and operating principles");
+          appendLine("02 systems      / production route");
+          appendLine("03 artifacts    / public traces");
+          appendLine("04 contact      / clear signal");
+          break;
+        case "history":
+          commandHistory.forEach((item, index) => appendLine(`${String(index + 1).padStart(2, " ")}  ${item}`));
+          break;
+        case "echo":
+          appendLine(arg);
+          break;
+        case "date":
+          appendLine(new Date().toString());
+          break;
+        case "ritual":
+          appendLine("lighting lantern...");
+          appendLine("checking compass...");
+          appendLine("result: deploy only after tea and one suspiciously calm reread.", "terminal-ok");
+          break;
+        case "whoami":
+          appendLine("Ignat Remizov - CTO building readable fintech systems under strange skies.");
+          break;
+        case "contact":
+          appendLine("email:");
+          appendLinkLine("ignat@ignatremizov.com", links.email);
+          appendLinkLine("LinkedIn", links.linkedin);
+          break;
+        case "links":
+          Object.entries(links).forEach(([name, href]) => appendLine(`${name.padEnd(8, " ")} ${href}`));
+          break;
+        case "open": {
+          const target = arg.toLowerCase();
+          if (!links[target]) {
+            appendLine(`open: unknown target "${arg}". Try: ${Object.keys(links).join(", ")}`, "terminal-muted");
+            break;
+          }
+          appendLine(`opening ${target}...`, "terminal-ok");
+          window.open(links[target], target === "email" ? "_self" : "_blank", "noopener,noreferrer");
+          break;
+        }
+        case "clear":
+          terminalOutput.replaceChildren();
+          break;
+        default:
+          appendLine(`${command}: command not found. Type help.`, "terminal-muted");
+      }
+    };
+
+    terminal?.addEventListener("click", () => terminalInput.focus());
+
+    terminalForm?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const value = terminalInput.value;
+      if (value.trim()) {
+        commandHistory.push(value);
+        historyIndex = commandHistory.length;
+      }
+      terminalInput.value = "";
+      runCommand(value);
+    });
+
+    terminalInput?.addEventListener("keydown", (event) => {
+      if (event.key === "Tab") {
+        event.preventDefault();
+        const value = terminalInput.value.trim();
+        if (!value) {
+          appendLine(commandNames.join("  "), "terminal-muted");
+          return;
+        }
+
+        const [first, ...rest] = value.split(/\s+/);
+        if (rest.length) return;
+        const matches = commandNames.filter((name) => name.startsWith(first.toLowerCase()));
+        if (matches.length === 1) {
+          terminalInput.value = `${matches[0]} `;
+        } else if (matches.length > 1) {
+          appendLine(matches.join("  "), "terminal-muted");
+        } else {
+          appendLine(`no tools match "${first}"`, "terminal-muted");
+        }
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        historyIndex = Math.max(0, historyIndex - 1);
+        terminalInput.value = commandHistory[historyIndex] || "";
+      }
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        historyIndex = Math.min(commandHistory.length, historyIndex + 1);
+        terminalInput.value = commandHistory[historyIndex] || "";
+      }
+    });
+
+    updateTerminalPath();
+
+    const updateRouteRail = () => {
+      const maxScroll = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
+      const progress = Math.min(1, Math.max(0, window.scrollY / maxScroll));
+      root.style.setProperty("--route-progress", progress.toFixed(4));
+
+      const anchorY = window.innerHeight * 0.42;
+      let activeIndex = 0;
+      routeTargets.forEach((target, index) => {
+        if (target.getBoundingClientRect().top <= anchorY) activeIndex = index;
+      });
+
+      routeLinks.forEach((link, index) => {
+        if (index === activeIndex) link.setAttribute("aria-current", "true");
+        else link.removeAttribute("aria-current");
+      });
+    };
+
+    let routeQueued = false;
+    const queueRouteRail = () => {
+      if (routeQueued) return;
+      routeQueued = true;
+      requestAnimationFrame(() => {
+        updateRouteRail();
+        routeQueued = false;
+      });
+    };
+
+    updateRouteRail();
+    window.addEventListener("scroll", queueRouteRail, { passive: true });
+    window.addEventListener("resize", queueRouteRail);
+
+    if (!reduceMotion) {
+      window.addEventListener("pointermove", (event) => {
+        const mx = (event.clientX / window.innerWidth - 0.5).toFixed(4);
+        const my = (event.clientY / window.innerHeight - 0.5).toFixed(4);
+        root.style.setProperty("--mx", mx);
+        root.style.setProperty("--my", my);
+      }, { passive: true });
+
+      let scrollQueued = false;
+      const updateFoliageScroll = () => {
+        root.style.setProperty("--foliage-y", `${Math.round(window.scrollY * -0.3)}px`);
+        scrollQueued = false;
+      };
+
+      updateFoliageScroll();
+      window.addEventListener("scroll", () => {
+        if (scrollQueued) return;
+        scrollQueued = true;
+        requestAnimationFrame(updateFoliageScroll);
+      }, { passive: true });
+    }
+  </script>
+</body>
+</html>

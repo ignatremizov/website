@@ -30,3 +30,8 @@ Temporary Items
 *.css.map
 
 website design.sketch
+
+# Local JavaScript build and browser-test output
+node_modules/
+dist/
+.playwright-cli/
