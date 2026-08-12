@@ -39,6 +39,8 @@ src/
     ├── scenePrimitives.ts         Shared primitive construction
     ├── sceneResources.ts          Shared GPU-resource disposal
     ├── proceduralTextures.ts      Runtime-authored texture helpers
+    ├── zones/                     Stateful controllers grouped by owning world
+    │   └── grid/HanoiPuzzle.ts    Checksum puzzle, snapshot, and visual lifecycle
     └── math/                      Separately lazy Mightymatica feature boundary
         ├── MightymaticaZone.ts    Math-room composition and lifecycle
         ├── types.ts               Context and runtime ports to the main game
@@ -80,6 +82,8 @@ PortfolioGame
 
 Focused modules under `src/game/` own reusable rules, effects, props, and sequences. A stateful controller should accept the smallest useful context or callbacks and expose a narrow lifecycle such as `update`, `setQuality`, `reactToSpell`, `reset`, or `dispose`. A pure calculation should avoid Three.js when plain numeric inputs are enough. Do not move a one-line coordinate or material adjustment into a new abstraction; extract a coherent behavior.
 
+`src/game/zones/` contains substantial world-owned controllers. A controller owns its feature state, geometry construction, interactions, animation, transient snapshot, and dynamic-object enumeration together. `PortfolioGame` supplies shared engine services through a narrow host context and decides when zone-level events run. In particular, `WorldCollapseSequence` owns the common Event Horizon envelope while `PortfolioGame` retains per-zone dispatch; a feature controller may expose its own destruction reaction without replacing that world-specific coordination.
+
 `src/game/math/` is a hard lazy-loading boundary. `MightymaticaZone.ts` composes the room, and each substantial exhibit belongs in its own module. Exhibits receive shared engine services through `MightymaticaZoneContext`; they must not import `PortfolioGame`, `main.ts`, or shell modules. Do not statically import a math exhibit from code in the eager shell or main game chunk.
 
 ### Where new code belongs
@@ -88,7 +92,7 @@ Focused modules under `src/game/` own reusable rules, effects, props, and sequen
 - Persistence schemas and recovery belong in the matching `src/shell/` store. Pure invariants and migrations belong in a sibling rules module.
 - Shared cross-layer vocabulary belongs in `world/WorldContracts.ts`, but only when more than one layer genuinely consumes it. Feature-local types should stay with the feature.
 - Renderer-wide traversal, camera, collision, interaction, and zone-lifecycle changes are wired through `PortfolioGame`. Put separable calculations or controllers in focused `src/game/` files and let `PortfolioGame` compose them.
-- Small changes to an existing Field, Falls, Grid, or Archive prop can remain beside its current builder in `PortfolioGame`. A substantial new puzzle or prop with independent state should become a named controller module under `src/game/`.
+- Small changes to an existing Field, Falls, Grid, or Archive prop can remain beside its current builder in `PortfolioGame`. A substantial new puzzle or prop with independent state should become a named controller under `src/game/zones/<zone>/`.
 - Mightymatica room changes belong in `src/game/math/`. Add a module per exhibit and register it through `MightymaticaZone`, extending the context port only for a service that multiple exhibits or the host must coordinate.
 - Reusable geometry constructors belong in `scenePrimitives.ts`; procedural visual resources belong in `proceduralTextures.ts`; teardown logic belongs in `sceneResources.ts`. Do not duplicate these responsibilities inside a feature.
 - Runtime images and preserved exhibit media belong under a descriptive `public/assets/` subdirectory. Design references belong in `art/concepts/`.

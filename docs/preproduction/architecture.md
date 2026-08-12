@@ -56,6 +56,8 @@ main
     ├── bounded PencilTeleportRitual visual
     ├── shared scene primitives and resource disposal
     ├── stateful world props (for example RuneAltar)
+    ├── world-owned feature controllers
+    │   └── Grid Hanoi puzzle, session snapshot, and visual lifecycle
     └── math (lazy from the game)
         ├── Mightymatica zone shell
         ├── archive-faithful Pythagoras curator
@@ -76,6 +78,12 @@ mutating storage collections directly. `PortfolioGame` remains the integration
 boundary for shared physics and progression; self-contained props with their own
 animation state belong in focused modules and expose an object, update method, and
 narrow hooks rather than adding another state cluster to the controller.
+World-owned controllers under `game/zones` receive shared collision, interaction,
+status, player-frame, and material services through narrow host contexts. The Hanoi
+controller is the first such boundary: it owns construction, legal-move state,
+cross-zone session snapshots, interaction labels, animation, batching protection,
+and its coin-level collapse reaction. `PortfolioGame` still decides when Grid's
+Event Horizon branch runs, alongside Pong, rack, and Daemon behavior.
 `SurfaceSelection` is the first extracted physics seam: it selects active, descending,
 and grounded surfaces in one reusable scan rather than allocating and sorting candidate
 arrays in the frame loop. `TerminalCommands` similarly owns canonical commands and
