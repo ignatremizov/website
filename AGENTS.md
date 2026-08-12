@@ -40,7 +40,9 @@ src/
     ├── sceneResources.ts          Shared GPU-resource disposal
     ├── proceduralTextures.ts      Runtime-authored texture helpers
     ├── zones/                     Stateful controllers grouped by owning world
-    │   └── grid/HanoiPuzzle.ts    Checksum puzzle, snapshot, and visual lifecycle
+    │   └── grid/
+    │       ├── HanoiPuzzle.ts     Checksum puzzle, snapshot, and visual lifecycle
+    │       └── PongChallenge.ts   Court, reliquary, input, and match lifecycle
     └── math/                      Separately lazy Mightymatica feature boundary
         ├── MightymaticaZone.ts    Math-room composition and lifecycle
         ├── types.ts               Context and runtime ports to the main game
