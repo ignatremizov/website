@@ -57,6 +57,7 @@ main
     ├── shared scene primitives and resource disposal
     ├── stateful world props (for example RuneAltar)
     ├── world-owned feature controllers
+    │   ├── Archive heliograph, observability ring, and beam lifecycle
     │   ├── Grid Hanoi puzzle, session snapshot, and visual lifecycle
     │   └── Grid Pong court, Thunder reliquary, pointer input, and match lifecycle
     └── math (lazy from the game)
@@ -88,7 +89,11 @@ reliquary, and local collapse reaction. Cross-world WRONG ADDRESS ownership cros
 that boundary through a revocable packet lease; progression remains in
 `PortfolioGame` and is reported through a victory callback. `PortfolioGame` still
 decides when Grid's Event Horizon branch runs and coordinates the controller reactions
-with rack and Daemon behavior.
+with rack and Daemon behavior. The Archive signal controller owns the heliograph,
+relay bearings, observability pulse/log cascade, routed beams, player interruption,
+spell disruption, and optical collapse fragments. The Archive Event Horizon branch
+still supplies its active collapse frame and coordinates that local reaction with
+planet, atlas, and data-glass behavior.
 `SurfaceSelection` is the first extracted physics seam: it selects active, descending,
 and grounded surfaces in one reusable scan rather than allocating and sorting candidate
 arrays in the frame loop. `TerminalCommands` similarly owns canonical commands and

@@ -40,6 +40,8 @@ src/
     ├── sceneResources.ts          Shared GPU-resource disposal
     ├── proceduralTextures.ts      Runtime-authored texture helpers
     ├── zones/                     Stateful controllers grouped by owning world
+    │   ├── archive/
+    │   │   └── ArchiveSignalPuzzle.ts  Heliograph and observability lifecycle
     │   └── grid/
     │       ├── HanoiPuzzle.ts     Checksum puzzle, snapshot, and visual lifecycle
     │       └── PongChallenge.ts   Court, reliquary, input, and match lifecycle
