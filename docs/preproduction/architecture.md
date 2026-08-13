@@ -355,8 +355,11 @@ flat rectangles.
   Completed and untouched stations perform no recurring redraw or texture upload.
   Its four tape planes share one 256×64 non-mipmapped procedural texture; only texture
   offset and four vertical transforms animate during collection. Intrusion reuses the
-  existing bounded needle instances, adding scalar horizontal velocities rather than
-  debris objects or a physics dependency.
+  existing bounded needle instances and settled-cell index, adding scalar horizontal
+  velocities rather than debris objects or a physics dependency. A narrow read-only
+  traveling-body port lets the lazy exhibit sample the current WRONG ADDRESS position,
+  size, resting height, and held state without importing the shared kickable runtime;
+  player and asteroid sweeps share the same bounded disturbance pass.
 - Math may register a small direct-pointer action against an explicit scene object.
   Pointer actions are proximity-gated, ray-tested only during pointer events, protected
   from static batching, and retain the normal E/Enter/touch interaction route for

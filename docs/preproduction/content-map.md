@@ -76,7 +76,9 @@ rather than maintaining separate claims.
   animated black-yellow tape with a low jump-clear collider. A player who enters
   during collection sends nearby needles back into the air, changes their final
   crossings, rolls counts backward and forward, and permanently marks that run
-  invalid.
+  invalid. The traveling WRONG ADDRESS asteroid can contaminate the sample through
+  the same physical sweep, or remain on the remote switch as a visible weight that
+  starts or accelerates one run.
 - Chocolate out of nothing: the recovered four-piece 5 × 8 bar from the chocolate
   segment of `Paradox box.swf`, including its top-left square, five-square strip, and
   two shallow diagonal slabs. Every draggable/stackable slab carries climbable moving

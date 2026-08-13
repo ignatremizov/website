@@ -65,6 +65,14 @@ export interface MathDynamicJumpSurface {
   contains?: (x: number, z: number, margin: number) => boolean;
 }
 
+export interface MathTravelingBody {
+  position: Readonly<THREE.Vector3>;
+  radius: number;
+  restingY: number;
+  enabled: boolean;
+  held: boolean;
+}
+
 export interface MightymaticaZoneContext {
   root: THREE.Group;
   quality: MathQualityTier;
@@ -114,6 +122,7 @@ export interface MightymaticaZoneContext {
   registerInstanceDrag: (spec: MathInstanceDragSpec) => void;
   copyPlayerPosition: (target: THREE.Vector3) => THREE.Vector3;
   getPlayerFeetHeight: () => number;
+  getTravelingBody: () => MathTravelingBody | null;
   registerPlayerOccluder: (object: THREE.Object3D) => void;
   registerReturnAperture: (
     x: number,

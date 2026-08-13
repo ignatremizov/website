@@ -280,8 +280,8 @@ Measured on the vertical slice:
 - Shell JavaScript: 53.78 kB minified / 18.10 kB gzip.
 - Shell CSS: 80.83 kB minified / 18.26 kB gzip.
 - In-page hero: 252.69 kB WebP (the 528.42 kB JPEG remains social metadata only).
-- Lazy game code: 573.71 kB minified / 164.99 kB gzip.
-- Nested Mightymatica code: 85.18 kB minified / 26.19 kB gzip.
+- Lazy game code: 573.90 kB minified / 165.05 kB gzip.
+- Nested Mightymatica code: 87.66 kB minified / 26.79 kB gzip.
 - Lazy Three.js: 589.00 kB minified / 148.09 kB gzip.
 - First-playable JavaScript after the shell: about 313 kB gzip.
 <!-- build-metrics:end -->

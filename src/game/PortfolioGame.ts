@@ -781,6 +781,13 @@ export class PortfolioGame {
   private readonly tempWorld = new THREE.Vector3();
   private readonly ambientGridDragTarget = new THREE.Vector3();
   private readonly tempDirection = new THREE.Vector3();
+  private readonly mathTravelingBody = {
+    position: new THREE.Vector3(),
+    radius: 0,
+    restingY: 0,
+    enabled: false,
+    held: false,
+  };
   private readonly tempBounds = new THREE.Box3();
   private readonly pointer = new THREE.Vector2();
   private readonly pointerRaycaster = new THREE.Raycaster();
@@ -8289,6 +8296,20 @@ export class PortfolioGame {
       },
       copyPlayerPosition: (target) => target.copy(this.playerPosition),
       getPlayerFeetHeight: () => this.surfaceOffset + this.jumpHeight,
+      getTravelingBody: () => {
+        const asteroid = this.archiveAsteroid;
+        if (!asteroid) return null;
+        this.mathTravelingBody.position.copy(
+          asteroid.object.position,
+        );
+        this.mathTravelingBody.radius = asteroid.radius;
+        this.mathTravelingBody.restingY = asteroid.restingY;
+        this.mathTravelingBody.enabled =
+          asteroid.enabled && asteroid.object.visible;
+        this.mathTravelingBody.held =
+          asteroid === this.heldKickable;
+        return this.mathTravelingBody;
+      },
       registerPlayerOccluder: (object) => {
         this.registerPlayerOccluder(object);
       },

@@ -37,6 +37,8 @@ const buttonLocalZ = 2.92;
 const buttonSurfaceY = 1.18;
 const buttonBaseY = buttonSurfaceY - 0.08;
 const buttonPressDuration = 0.34;
+const asteroidButtonRadius = 0.43;
+const asteroidButtonReleaseRadius = 0.58;
 const tableHalfWidth = 2.8;
 const tableHalfDepth = 2.25;
 const cordonHalfWidth = 3.12;
@@ -114,6 +116,7 @@ export class BuffonNeedleExhibit {
     THREE.MeshBasicMaterial
   >;
   private readonly playerWorldPosition = new THREE.Vector3();
+  private readonly asteroidPreviousPosition = new THREE.Vector3();
   private readonly movingNeedles = new Set<number>();
   private readonly dirtyNeedles = new Set<number>();
   private readonly settledCells = new Map<string, Set<number>>();
@@ -135,6 +138,7 @@ export class BuffonNeedleExhibit {
   private tapeDeployment = 0;
   private tapeDeployed = false;
   private buttonPressAge = buttonPressDuration;
+  private buttonWeightBlend = 0;
   private interferenceCooldown = 0;
   private playerInsideExperiment = false;
   private interferenceAnchorX = 0;
@@ -148,6 +152,10 @@ export class BuffonNeedleExhibit {
   private spellBlastStage: Exclude<MathSpellStage, "spark"> | null = null;
   private spellBlastDelay = 0;
   private completionAnnouncementDelay = 0;
+  private asteroidPositionKnown = false;
+  private asteroidInsideExperiment = false;
+  private asteroidInterferenceCooldown = 0;
+  private asteroidHoldingButton = false;
 
   constructor(context: MightymaticaZoneContext) {
     this.context = context;
@@ -456,6 +464,7 @@ export class BuffonNeedleExhibit {
 
     this.updateSpellBlast(delta);
     this.updatePlayerInterference(delta);
+    this.updateAsteroidInterference(delta);
 
     for (const index of this.movingNeedles) {
       const sample = this.samples[index];
@@ -527,7 +536,22 @@ export class BuffonNeedleExhibit {
     const buttonProgress = this.context.reducedMotion
       ? 1
       : this.buttonPressAge / buttonPressDuration;
-    const press = buttonProgress < 1 ? Math.sin(buttonProgress * Math.PI) : 0;
+    const weightFollow = this.context.reducedMotion
+      ? 1
+      : 1 - Math.exp(-delta * 18);
+    this.buttonWeightBlend = THREE.MathUtils.lerp(
+      this.buttonWeightBlend,
+      this.asteroidHoldingButton ? 1 : 0,
+      weightFollow,
+    );
+    if (Math.abs(this.buttonWeightBlend) < 0.002) {
+      this.buttonWeightBlend = 0;
+    } else if (Math.abs(this.buttonWeightBlend - 1) < 0.002) {
+      this.buttonWeightBlend = 1;
+    }
+    const transientPress =
+      buttonProgress < 1 ? Math.sin(buttonProgress * Math.PI) : 0;
+    const press = Math.max(transientPress, this.buttonWeightBlend);
     this.remoteButton.position.y = buttonBaseY - press * 0.095;
     this.remoteButton.material.emissiveIntensity = 1.1 + press * 2.8;
 
@@ -643,25 +667,136 @@ export class BuffonNeedleExhibit {
     return disturbed > 0;
   }
 
+  private updateAsteroidInterference(delta: number): boolean {
+    const asteroid = this.context.getTravelingBody();
+    if (!asteroid?.enabled) {
+      this.asteroidPositionKnown = false;
+      this.asteroidInsideExperiment = false;
+      this.asteroidHoldingButton = false;
+      this.asteroidInterferenceCooldown = 0;
+      return false;
+    }
+
+    const localX = asteroid.position.x - this.group.position.x;
+    const localZ = asteroid.position.z - this.group.position.z;
+    const horizontalButtonDistance = Math.hypot(
+      localX - buttonLocalX,
+      localZ - buttonLocalZ,
+    );
+    const asteroidBottom = asteroid.position.y - asteroid.restingY;
+    const restingOnButton =
+      !asteroid.held &&
+      Math.abs(asteroidBottom - buttonSurfaceY) <= 0.24 &&
+      horizontalButtonDistance <=
+        (this.asteroidHoldingButton
+          ? asteroidButtonReleaseRadius
+          : asteroidButtonRadius);
+    if (restingOnButton && !this.asteroidHoldingButton) {
+      this.startOrAccelerate("asteroid");
+    }
+    this.asteroidHoldingButton = restingOnButton;
+
+    const experimentActive =
+      this.rainActive ||
+      (this.emitted > 0 && this.settled < this.emitted);
+    this.asteroidInterferenceCooldown = Math.max(
+      0,
+      this.asteroidInterferenceCooldown - delta,
+    );
+    const bodyHeight = asteroid.position.y;
+    const inside =
+      experimentActive &&
+      Math.abs(localX) <= tableHalfWidth - 0.08 + asteroid.radius &&
+      Math.abs(localZ) <= tableHalfDepth - 0.08 + asteroid.radius &&
+      bodyHeight + asteroid.radius >= 0.48 &&
+      bodyHeight - asteroid.radius <= 3.1;
+    if (!inside) {
+      this.asteroidInsideExperiment = false;
+      this.asteroidPreviousPosition.set(
+        localX,
+        bodyHeight,
+        localZ,
+      );
+      this.asteroidPositionKnown = true;
+      return false;
+    }
+
+    const firstEntry = !this.asteroidInsideExperiment;
+    this.asteroidInsideExperiment = true;
+    const previousX = this.asteroidPositionKnown
+      ? this.asteroidPreviousPosition.x
+      : localX;
+    const previousZ = this.asteroidPositionKnown
+      ? this.asteroidPreviousPosition.z
+      : localZ;
+    const movementSquared =
+      (localX - previousX) ** 2 + (localZ - previousZ) ** 2;
+    this.asteroidPreviousPosition.set(
+      localX,
+      bodyHeight,
+      localZ,
+    );
+    this.asteroidPositionKnown = true;
+    if (
+      !firstEntry &&
+      movementSquared < 0.008 * 0.008 &&
+      this.movingNeedles.size === 0
+    ) {
+      return false;
+    }
+    if (!firstEntry && this.asteroidInterferenceCooldown > 0) {
+      return false;
+    }
+    this.asteroidInterferenceCooldown = firstEntry ? 0.06 : 0.12;
+    const disturbed = this.disturbNeedles(
+      previousX,
+      previousZ,
+      localX,
+      localZ,
+      asteroidBottom,
+      Math.max(
+        disturbanceRadius,
+        asteroid.radius + needleLength * 0.5 + 0.14,
+      ),
+      1.34,
+    );
+    if (disturbed === 0) return false;
+
+    const firstBreach = !this.sampleContaminated;
+    this.sampleContaminated = true;
+    if (firstBreach) {
+      this.disturbanceEvents = 1;
+      this.context.onStatus(
+        "The wrong-address stone enters the sample. Needles scatter from its path, and the live estimate marks the run INVALID.",
+      );
+    } else {
+      this.disturbanceEvents += 1;
+    }
+    this.displayDirty = true;
+    return true;
+  }
+
   private disturbNeedles(
     previousPlayerX: number,
     previousPlayerZ: number,
     playerX: number,
     playerZ: number,
     feetHeight: number,
+    radius = disturbanceRadius,
+    impulseScale = 1,
   ): number {
     const candidates = new Map<
       number,
       { sample: NeedleSample; distanceSquared: number }
     >();
     const minimumX =
-      Math.min(previousPlayerX, playerX) - disturbanceRadius;
+      Math.min(previousPlayerX, playerX) - radius;
     const maximumX =
-      Math.max(previousPlayerX, playerX) + disturbanceRadius;
+      Math.max(previousPlayerX, playerX) + radius;
     const minimumZ =
-      Math.min(previousPlayerZ, playerZ) - disturbanceRadius;
+      Math.min(previousPlayerZ, playerZ) - radius;
     const maximumZ =
-      Math.max(previousPlayerZ, playerZ) + disturbanceRadius;
+      Math.max(previousPlayerZ, playerZ) + radius;
     const minimumCellX = this.getCellCoordinate(minimumX, tableHalfWidth);
     const maximumCellX = this.getCellCoordinate(maximumX, tableHalfWidth);
     const minimumCellZ = this.getCellCoordinate(minimumZ, tableHalfDepth);
@@ -681,7 +816,7 @@ export class BuffonNeedleExhibit {
             playerX,
             playerZ,
           );
-          if (distanceSquared <= disturbanceRadius * disturbanceRadius) {
+          if (distanceSquared <= radius * radius) {
             candidates.set(index, { sample, distanceSquared });
           }
         }
@@ -698,7 +833,7 @@ export class BuffonNeedleExhibit {
         playerX,
         playerZ,
       );
-      if (distanceSquared <= disturbanceRadius * disturbanceRadius) {
+      if (distanceSquared <= radius * radius) {
         candidates.set(index, { sample, distanceSquared });
       }
     }
@@ -752,7 +887,8 @@ export class BuffonNeedleExhibit {
       );
       directionX /= directionLength;
       directionZ /= directionLength;
-      const impulse = 0.72 + this.nextRandom() * 1.38;
+      const impulse =
+        (0.72 + this.nextRandom() * 1.38) * impulseScale;
       sample.velocityX += directionX * impulse;
       sample.velocityZ += directionZ * impulse;
       sample.x = THREE.MathUtils.clamp(
@@ -774,7 +910,7 @@ export class BuffonNeedleExhibit {
       );
       sample.velocityY = Math.max(
         sample.velocityY,
-        1.05 + this.nextRandom() * 1.45,
+        (1.05 + this.nextRandom() * 1.45) * impulseScale,
       );
       sample.fallSpeed = 1.35 + this.nextRandom() * 1.5;
       sample.tumble += 0.8 + this.nextRandom() * 2.4;
@@ -937,7 +1073,9 @@ export class BuffonNeedleExhibit {
     this.tapeTexture.dispose();
   }
 
-  private startOrAccelerate(): void {
+  private startOrAccelerate(
+    source: "direct" | "asteroid" = "direct",
+  ): void {
     this.buttonPressAge = 0;
     this.setTapeDeployed(true);
     if (
@@ -950,7 +1088,9 @@ export class BuffonNeedleExhibit {
     if (this.rainActive) {
       this.accelerationBoost = Math.min(9, this.accelerationBoost + 2.5);
       this.context.onStatus(
-        "The red button sinks again. The feed accelerates while every new drop remains visible.",
+        source === "asteroid"
+          ? "The wrong-address stone bears down on the red switch. The feed answers its weight with a faster rain."
+          : "The red button sinks again. The feed accelerates while every new drop remains visible.",
       );
       return;
     }
@@ -963,7 +1103,9 @@ export class BuffonNeedleExhibit {
         `Press again to increase feed · ${this.settled}/${this.cap}`,
       );
       this.context.onStatus(
-        this.context.reducedMotion
+        source === "asteroid"
+          ? `The wrong-address stone settles on the switch. The post yields beneath it, releasing a ${this.cap}-needle rain.`
+          : this.context.reducedMotion
           ? `Needles begin arriving in a progressive ${this.cap}-drop sample. Reduced motion settles each new needle without a fall.`
           : `The remote post releases a slow rain toward a ${this.cap}-needle sample. Striped tape snaps upward around the table.`,
       );

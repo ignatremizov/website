@@ -192,7 +192,10 @@ workshop contains:
   or a physical landing on its remote red pressure post, enclosed
   by low animated hazard tape that must be jumped, with live settled/crossing counts
   and quality caps of 240/480/720; entering during a live sample knocks nearby
-  needles back into motion, revises both counters, and invalidates that run;
+  needles back into motion, revises both counters, and invalidates that run; the
+  traveling WRONG ADDRESS asteroid performs the same contamination with a heavier
+  impulse and can physically hold the pressure button down to start or accelerate
+  the feed once per placement;
 - the recovered four-piece 5 × 8 Chocolate out of nothing cut, with a top-left
   square, five-square strip, two shallow diagonal slabs, and an apparent
   forty-first-square cycle whose residual area reads as a narrow recessed seam.

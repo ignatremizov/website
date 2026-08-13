@@ -107,7 +107,11 @@ separated sticks. Entering the cordon while collection is active collides with n
 falling and settled samples: settled/crossing counts can decrease, displaced needles
 fall again with altered positions and angles, and their new crossings are counted
 when they land. The display continues showing the corrupted estimate but marks the
-entire run invalid and withholds NEEDLE DROP.
+entire run invalid and withholds NEEDLE DROP. The traveling WRONG ADDRESS asteroid
+uses the same swept, spatially indexed interference path with a slightly heavier
+impulse. If physically settled on the remote pressure button, its bottom reaches the
+registered switch height, starts or accelerates the rain once, and keeps the modeled
+button depressed until removed.
 
 ### Chocolate out of nothing
 
@@ -216,8 +220,11 @@ README. No SWF is loaded by the default experience.
    landing on the button.
    Confirm the tape animates, blocks walking, and can be jumped. Enter during the run;
    nearby needles should lift/scatter, settled and crossing counts should revise, and
-   the display should mark that run invalid. Reset, complete one clean run, and confirm
-   it stops at the quality cap and becomes idle.
+   the display should mark that run invalid. Route WRONG ADDRESS into Mightymatica,
+   drag it through an active sample, then settle it on the red button; confirm the
+   needles scatter, the button remains depressed under its weight, and one placement
+   produces one start or acceleration. Reset, complete one clean run, and confirm it
+   stops at the quality cap and becomes idle.
 9. Run chocolate through all four phases and confirm the 5 × 8 bar uses the recovered
    top-left-square, five-square-strip, and diagonal cuts before revealing the apparent
    forty-first square; there should be no pre-cut holes or post-slide see-through gap.
