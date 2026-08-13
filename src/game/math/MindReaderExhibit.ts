@@ -20,9 +20,9 @@ const portraitPanelScale = 0.78;
 // The instructions stay west of the walkable chart while the portrait becomes
 // a distinct focal panel at its north edge.
 const instructionPanelPosition = [-4.35, 1.78, -0.37] as const;
-// This screen-space left/down adjustment keeps the photographed orb aligned
-// with the physical one while giving Yuri's portrait a little more presence.
-const portraitPanelPosition = [-1.28, 1.39, -4.23] as const;
+// Keep the portrait just screen-right of the physical assembly so the
+// photographed and modeled orbs read as one staged composition.
+const portraitPanelPosition = [-1.14, 1.39, -4.37] as const;
 // The photographed orb sits one camera-depth behind this physical assembly.
 // Their small vertical offset lets the 2D answer appear to enter the 3D ball.
 const orbAssemblyPosition = [-0.75, 0, -3.9] as const;
@@ -367,12 +367,12 @@ export class MindReaderExhibit {
       }),
     );
     this.answer.name = "mind-reader-revealed-symbol";
-    // Seat the billboard on the camera-facing tangent of the sphere. The
-    // screen projection remains centered, while scene depth lets a player who
-    // jumps in front of the ball correctly cover the symbol.
+    // Seat the billboard just beyond the camera-facing tangent of the sphere.
+    // The extra clearance survives the orb's revealed-state pulse, while scene
+    // depth still lets a player who jumps in front cover the symbol.
     this.answer.position
       .copy(this.orb.position)
-      .addScaledVector(panelToCamera, 0.635);
+      .addScaledVector(panelToCamera, 0.72);
     this.answer.scale.setScalar(answerBaseScale);
     this.answer.renderOrder = 5;
     this.answer.visible = false;
