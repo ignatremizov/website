@@ -94,9 +94,13 @@ that boundary through a revocable packet lease; progression remains in
 decides when Grid's Event Horizon branch runs and coordinates the controller reactions
 with rack and Daemon behavior. The Archive signal controller owns the heliograph,
 relay bearings, observability pulse/log cascade, routed beams, player interruption,
-spell disruption, and optical collapse fragments. The Archive Event Horizon branch
-still supplies its active collapse frame and coordinates that local reaction with
-planet, atlas, and data-glass behavior.
+spell disruption, and optical collapse fragments. The Archive orbit controller owns
+the planets, floor contact projections, multi-pointer telekinesis, planet/player/
+asteroid ricochets, Thunder gravity lock, orbit restoration, star-atlas ascension,
+and the route-agnostic `TO THE MOON` height milestone. Traveling-asteroid routing and
+its revocable Pong lease remain cross-world composition concerns. The Archive Event
+Horizon branch supplies its active collapse frame to both local controllers and
+coordinates those reactions with data-glass behavior.
 The Falls rune controller owns the six movable crystal clusters, socket placement and
 sequence state, shattering and trace-driven repair, rune effects, cave seal, central
 waterfall opening, hidden chest, and chest burst. It registers crystal bodies and

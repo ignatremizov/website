@@ -21,6 +21,7 @@ import {
   type IgnitionPanicFrame,
 } from "./PlayerIgnitionPanic";
 import { RuneAltar } from "./RuneAltar";
+import { ArchiveOrbitPlayground } from "./zones/archive/ArchiveOrbitPlayground";
 import { ArchiveSignalPuzzle } from "./zones/archive/ArchiveSignalPuzzle";
 import { VoidTurtleRide } from "./zones/field/VoidTurtleRide";
 import {
@@ -363,48 +364,6 @@ interface TelescopeRig {
   raised: boolean;
 }
 
-interface OrbitingPlanet {
-  pivot: THREE.Group;
-  planet: THREE.Object3D;
-  bodyMaterial: THREE.MeshStandardMaterial;
-  speed: number;
-  detail: number;
-  radius: number;
-  collisionRadius: number;
-  orbitalBoost: number;
-  radialOffset: number;
-  radialVelocity: number;
-  tiltVelocity: number;
-  impact: number;
-  collisionCooldown: number;
-  playerContact: boolean;
-  rigidity: number;
-  rigidUntil: number;
-  worldPosition: THREE.Vector3;
-}
-
-interface OrbitTelekinesisHold {
-  planet: OrbitingPlanet;
-  plane: THREE.Plane;
-  point: THREE.Vector3;
-  previousPoint: THREE.Vector3;
-  velocity: THREE.Vector3;
-  grabOffset: THREE.Vector3;
-  previousTime: number;
-  moved: boolean;
-}
-
-interface ArchiveAtlasState {
-  globe: THREE.Mesh<THREE.IcosahedronGeometry, THREE.MeshStandardMaterial>;
-  orbit: THREE.Mesh<THREE.TorusGeometry, THREE.MeshStandardMaterial>;
-  star: THREE.Group;
-  starMaterial: THREE.MeshBasicMaterial;
-  pulse: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
-  light: THREE.PointLight;
-  pulseAge: number;
-  ascensionBlend: number;
-}
-
 interface ArchiveDataGlassState {
   texture: THREE.CanvasTexture;
   material: THREE.MeshBasicMaterial;
@@ -638,7 +597,6 @@ const pointerInteractionLayer = 6;
 // Ground projections never belong in front of elevated transparent effects.
 // Draw them first so an overlapping spell aura can composite over the decal
 // while opaque planets and scenery continue to use normal depth occlusion.
-const groundProjectionRenderOrder = -10;
 const fieldHeartRadius = 1.58;
 const fieldHeartChargeThreshold = 0.92;
 const fieldRockFallRadius = 19.1;
@@ -676,22 +634,6 @@ function getCompassHeading(yaw: number): CompassHeading {
   );
 }
 
-const archiveAtlasX = -2;
-const archiveAtlasZ = -1.1;
-const archiveAtlasBarrierRadius = 2.08;
-const archiveAtlasRestColor = new THREE.Color(0x081521);
-const archiveAtlasRestEmissive = new THREE.Color(0x0b3040);
-const archiveAtlasSilverColor = new THREE.Color(0xb9c7cd);
-const archiveAtlasSilverEmissive = new THREE.Color(0x8ab9c6);
-const archiveAtlasRestOrbitColor = new THREE.Color(palette.brass);
-const archiveAtlasSilverOrbitColor = new THREE.Color(0xe0eaed);
-const archiveAtlasRestLightColor = new THREE.Color(palette.cyan);
-const archiveAtlasSilverLightColor = new THREE.Color(0xf2fdff);
-const archiveOrbitOuterRadius = 13.1;
-const archiveAscensionHeight = 5.55;
-const archiveGravityLockDuration = 10;
-const archiveGravityLockMotionScale = 0.045;
-const archiveGravityLockImpulseScale = 0.12;
 const heliographIgnitionDelay = 1.35;
 const heliographBurnDuration = 5.8;
 const heliographPanicRetriggerDelay = 0.52;
@@ -828,7 +770,6 @@ export class PortfolioGame {
   private lastFieldRockDebugRefresh = 0;
   private readonly kickables: Kickable[] = [];
   private readonly telescopeRigs: TelescopeRig[] = [];
-  private readonly orbitingPlanets: OrbitingPlanet[] = [];
   private readonly lanterns: LanternState[] = [];
   private readonly lanternReveals: LanternReveal[] = [];
   private readonly digitClouds: DigitCloud[] = [];
@@ -840,8 +781,6 @@ export class PortfolioGame {
   private readonly tempWorld = new THREE.Vector3();
   private readonly ambientGridDragTarget = new THREE.Vector3();
   private readonly tempDirection = new THREE.Vector3();
-  private readonly tempOrbitPosition = new THREE.Vector2();
-  private readonly tempOrbitPositionB = new THREE.Vector2();
   private readonly tempBounds = new THREE.Box3();
   private readonly pointer = new THREE.Vector2();
   private readonly pointerRaycaster = new THREE.Raycaster();
@@ -884,11 +823,6 @@ export class PortfolioGame {
   private readonly pencilRepairRay = new THREE.Ray();
   private readonly pencilRepairRayOrigin = new THREE.Vector3();
   private readonly pencilRepairDirection = new THREE.Vector3();
-  private readonly orbitTelekinesisHolds = new Map<
-    number,
-    OrbitTelekinesisHold
-  >();
-  private readonly heldOrbitingPlanets = new Set<OrbitingPlanet>();
 
   private renderer!: THREE.WebGLRenderer;
   private ambientGrid: AmbientGrid | null = null;
@@ -948,32 +882,16 @@ export class PortfolioGame {
   private readonly voidTurtleRide: VoidTurtleRide;
   private readonly hanoiPuzzle: HanoiPuzzle;
   private readonly pongChallenge: PongChallenge;
+  private readonly archiveOrbitPlayground: ArchiveOrbitPlayground;
   private readonly archiveSignalPuzzle: ArchiveSignalPuzzle;
   private readonly fallsRuneRitual: FallsRuneRitual;
   private readonly portalNetwork: PortalNetwork;
   private pongRoguePacketLease: PongRoguePacketLease | null = null;
-  private archiveAtlas: ArchiveAtlasState | null = null;
   private archiveDataGlass: ArchiveDataGlassState | null = null;
-  private archivePlanetFootprints: THREE.InstancedMesh<
-    THREE.PlaneGeometry,
-    THREE.MeshBasicMaterial
-  > | null = null;
-  private readonly archivePlanetFootprintDummy = new THREE.Object3D();
-  private readonly archivePlanetFootprintColor = new THREE.Color();
-  private readonly archivePlanetFootprintRestColor = new THREE.Color(
-    palette.cyan,
-  );
-  private readonly archivePlanetFootprintLockColor = new THREE.Color(0xffefb2);
-  private archiveOrbitDisturbed = false;
-  private archiveOrbitRestoreDwell = 0;
-  private archiveOrbitTelekinesisAnnounced = false;
-  private readonly archiveSpaceAsteroids: Kickable[] = [];
   private archiveAsteroid: Kickable | null = null;
   private archiveAsteroidShadow: AsteroidShadow | null = null;
   private travelingAsteroid: TravelingAsteroidState | null = null;
   private archiveMonitorTarget: BreakableMonitor | null = null;
-  private archiveOrbitPinballAnnounced = false;
-  private archiveAscensionComplete = false;
   private archivePinballChallengeComplete = false;
   private pongChallengeComplete = false;
   private cleanPongVictoryComplete = false;
@@ -1268,6 +1186,62 @@ export class PortfolioGame {
         this.syncPointerDragCursor();
       },
     });
+    this.archiveOrbitPlayground = new ArchiveOrbitPlayground({
+      canvas: this.canvas,
+      materials: this.materials,
+      colors: palette,
+      pointerRaycaster: this.pointerRaycaster,
+      playerRadius: this.playerRadius,
+      addInteraction: (...args) => {
+        this.addInteraction(...args);
+      },
+      addAnimatedItem: (item) => {
+        this.animatedItems.push(item);
+      },
+      registerClimbableBox: (...args) => {
+        this.registerClimbableBox(...args);
+      },
+      updatePointerRay: (event) => {
+        this.updatePointerRay(event);
+      },
+      getKickables: () => this.kickables,
+      getHeldKickable: () => this.heldKickable,
+      getPlayerPosition: () => this.playerPosition,
+      getPlayerMovement: () => this.movement,
+      setPlayerHorizontalPosition: (x, z) => {
+        this.playerPosition.x = x;
+        this.playerPosition.z = z;
+        this.constrainToBounds(this.playerPosition);
+      },
+      offsetPlayerHorizontalPosition: (x, z) => {
+        this.playerPosition.x += x;
+        this.playerPosition.z += z;
+        this.constrainToBounds(this.playerPosition);
+      },
+      launchPlayer: (minimumHeight, minimumVelocity) => {
+        this.jumpHeight = Math.max(this.jumpHeight, minimumHeight);
+        this.jumpVelocity = Math.max(
+          this.jumpVelocity,
+          minimumVelocity,
+        );
+      },
+      getPlayerPeakHeight: () =>
+        Math.max(
+          this.airbornePeakHeight,
+          this.surfaceOffset + this.jumpHeight,
+        ),
+      isNoclipEnabled: () => this.noclip,
+      getQuality: () => this.quality,
+      getElapsed: () => this.elapsed,
+      isReducedMotion: () => this.reduceMotion,
+      hasAchievement: (title) => this.hooks.hasAchievement(title),
+      onStatus: (message, options) => {
+        this.hooks.onStatus(message, options);
+      },
+      syncPointerCursor: (idleCursor) => {
+        this.syncPointerDragCursor(idleCursor);
+      },
+    });
     this.archiveSignalPuzzle = new ArchiveSignalPuzzle({
       canvas: this.canvas,
       materials: this.materials,
@@ -1391,7 +1365,6 @@ export class PortfolioGame {
       this.cleanPongVictoryComplete;
     this.archivePinballChallengeComplete =
       hooks.initialProgress.archivePinballChallengeComplete;
-    this.archiveAscensionComplete = hooks.hasAchievement("TO THE MOON");
     if (hooks.initialProgress.travelingAsteroidZone) {
       this.travelingAsteroid = {
         object: null,
@@ -2124,13 +2097,7 @@ export class PortfolioGame {
     }
     this.decorativeGroup.visible = quality !== "low";
     this.ambientGrid?.setQuality(quality);
-    for (const planet of this.orbitingPlanets) {
-      planet.pivot.visible =
-        this.heldOrbitingPlanets.has(planet) ||
-        quality === "high" ||
-        (quality === "medium" && planet.detail < 4) ||
-        planet.detail < 2;
-    }
+    this.archiveOrbitPlayground.refreshQuality();
     if (this.fishSchool) {
       const fishCount = this.getFishRenderCount(
         this.fishSchool,
@@ -2594,89 +2561,12 @@ export class PortfolioGame {
         castCharge,
         range,
       );
-      this.markArchiveOrbitDisturbed();
-      let gravityLocked = 0;
-      let worldsPushed = 0;
-      for (const planet of this.orbitingPlanets) {
-        if (!planet.pivot.visible) continue;
-        planet.planet.getWorldPosition(this.tempWorld);
-        const awayX = this.tempWorld.x - this.playerPosition.x;
-        const awayZ = this.tempWorld.z - this.playerPosition.z;
-        const distance = Math.hypot(awayX, awayZ);
-        if (distance <= 0.01 || distance > range) continue;
-
-        if (isThunder) {
-          const lockDuration =
-            archiveGravityLockDuration * (0.42 + castCharge * 0.58);
-          planet.rigidUntil = Math.max(
-            planet.rigidUntil,
-            this.elapsed + lockDuration,
-          );
-          planet.rigidity = Math.max(
-            planet.rigidity,
-            0.78 + castCharge * 0.2,
-          );
-          planet.radialVelocity *= THREE.MathUtils.lerp(
-            0.3,
-            0.045,
-            castCharge,
-          );
-          planet.orbitalBoost *= THREE.MathUtils.lerp(
-            0.26,
-            0.035,
-            castCharge,
-          );
-          planet.tiltVelocity *= THREE.MathUtils.lerp(
-            0.34,
-            0.08,
-            castCharge,
-          );
-          gravityLocked += 1;
-          continue;
-        }
-
-        // Spark and Surge are kinetic casts. They break any existing gravity
-        // lock, push away from the caster, and add tangential speed without
-        planet.rigidUntil = this.elapsed;
-        planet.rigidity = Math.min(planet.rigidity, 0.12);
-        const direction = Math.sign(planet.speed) || 1;
-        const stageForce = isSurge ? 1.28 : 0.72;
-        const chargeForce = 0.68 + castCharge * 0.78;
-        const tiltDirection = planet.detail % 2 === 0 ? 1 : -1;
-        this.applyOrbitingPlanetImpulse(
-          planet,
-          awayX / distance,
-          awayZ / distance,
-          (isSurge ? 5.2 : 3.4) * chargeForce,
+      const orbitObservation =
+        this.archiveOrbitPlayground.reactToSpell(
+          this.spellStage,
+          castCharge,
+          range,
         );
-        planet.orbitalBoost = THREE.MathUtils.clamp(
-          planet.orbitalBoost + direction * stageForce * chargeForce,
-          -2.4,
-          2.4,
-        );
-        planet.tiltVelocity = THREE.MathUtils.clamp(
-          planet.tiltVelocity +
-            tiltDirection * (0.16 + stageForce * 0.13) * chargeForce,
-          -0.72,
-          0.72,
-        );
-        worldsPushed += 1;
-      }
-      const orbitObservation = isThunder
-        ? gravityLocked > 0
-          ? `Thunder catches ${gravityLocked} nearby ${
-              gravityLocked === 1 ? "world" : "worlds"
-            }. Gold contact-rings harden as the orbits slow almost to stillness.`
-          : "Thunder rolls into the dark; no nearby world answers its weight."
-        : worldsPushed > 0
-          ? `${
-              isSurge ? "Packet Surge" : "Binary rain"
-            } drives ${worldsPushed} nearby ${
-              worldsPushed === 1 ? "world" : "worlds"
-            } outward into fast new arcs.`
-          : `${
-              isSurge ? "Packet Surge" : "Binary rain"
-            } scatters before reaching an orbit.`;
       const projectionDisrupted =
         isThunder &&
         signalPrismsReached &&
@@ -3040,22 +2930,7 @@ export class PortfolioGame {
 
     if (this.currentZone === "archive") {
       this.archiveSignalPuzzle.reactToWorldCollapse(frame);
-      for (const [index, planet] of this.orbitingPlanets.entries()) {
-        planet.pivot.rotation.y +=
-          delta * instability * (1.5 + index * 0.42);
-        planet.pivot.rotation.z =
-          Math.sin(this.elapsed * 0.8 + index) *
-          instability *
-          0.28;
-      }
-      if (this.archiveAtlas) {
-        this.archiveAtlas.light.intensity = Math.max(
-          this.archiveAtlas.light.intensity,
-          instability * (2.4 + Math.sin(this.elapsed * 8) * 0.8),
-        );
-        this.archiveAtlas.orbit.rotation.z +=
-          delta * instability * 2.4;
-      }
+      this.archiveOrbitPlayground.reactToWorldCollapse(frame, delta);
       if (this.archiveDataGlass) {
         this.archiveDataGlass.material.opacity =
           Math.max(
@@ -3100,14 +2975,14 @@ export class PortfolioGame {
             (this.playerIgnition?.activeSmokeCount ?? 0) > 0 ||
             (this.playerIgnition?.smolderRemaining ?? 0) > 0 ||
             (this.ambientGrid?.hasActiveMotion() ?? false) ||
-            this.orbitTelekinesisHolds.size > 0 ||
+            this.archiveOrbitPlayground.hasPointerDrag() ||
             this.digitStormAge < this.digitStormDuration ||
             this.thunderBolts.visible ||
             this.waterfallRecoveryAge >= 0 ||
             (this.tentState?.restBlend ?? 0) > 0.002 ||
             this.splashBurst?.drops.visible === true ||
             (this.runeAltar?.hasActiveMotion() ?? false) ||
-            (this.archiveAtlas?.pulseAge ?? 2) < 1.65 ||
+            this.archiveOrbitPlayground.hasActiveMotion() ||
             this.archiveSignalPuzzle.hasActiveMotion() ||
             this.fallsRuneRitual.hasActiveMotion() ||
             this.serverFlickerAge < this.serverFlickerDuration ||
@@ -3142,7 +3017,7 @@ export class PortfolioGame {
     this.legacySimulationCube?.rematerialization?.update(delta, this.elapsed);
     this.portalNetwork.update(delta);
     this.updateTelescopeRigs(delta);
-    this.updateOrbitingPlanets(delta);
+    this.archiveOrbitPlayground.update(delta);
     this.updateWanderingNpcs(delta);
     this.updateFishSchool(delta);
     this.fallsRuneRitual.update(delta);
@@ -3528,7 +3403,8 @@ export class PortfolioGame {
     } else if (!pongReaching && pointerActionReaching) {
       this.pointerActionReachTarget?.getWorldPosition(this.tempWorld);
     }
-    const primaryHeldOrbitingPlanet = this.getPrimaryHeldOrbitingPlanet();
+    const primaryHeldOrbitingPlanet =
+      this.archiveOrbitPlayground.getHeldTarget();
     const ambientGridReaching =
       this.ambientGrid?.getDragTarget(this.ambientGridDragTarget) ?? false;
     const reaching =
@@ -3688,7 +3564,7 @@ export class PortfolioGame {
       ignitionPanic.active
         ? undefined
         : (this.heldKickable?.object.position ??
-          primaryHeldOrbitingPlanet?.worldPosition ??
+          primaryHeldOrbitingPlanet ??
           (ambientGridReaching
             ? this.ambientGridDragTarget
             : undefined) ??
@@ -6094,252 +5970,6 @@ export class PortfolioGame {
     }
   }
 
-  private updateOrbitingPlanets(delta: number): void {
-    for (
-      let planetIndex = 0;
-      planetIndex < this.orbitingPlanets.length;
-      planetIndex += 1
-    ) {
-      const planet = this.orbitingPlanets[planetIndex];
-      if (!planet) continue;
-      planet.collisionCooldown = Math.max(0, planet.collisionCooldown - delta);
-      const rigidityTarget = this.elapsed < planet.rigidUntil ? 1 : 0;
-      const rigidityRate = rigidityTarget > planet.rigidity ? 9.5 : 2.2;
-      planet.rigidity +=
-        (rigidityTarget - planet.rigidity) *
-        (1 - Math.exp(-delta * rigidityRate));
-      if (rigidityTarget === 0 && planet.rigidity < 0.002) {
-        planet.rigidity = 0;
-      }
-      const held = this.heldOrbitingPlanets.has(planet);
-      if (held) {
-        planet.impact = 1;
-        planet.collisionCooldown = 0.3;
-      } else {
-        planet.orbitalBoost *= Math.exp(
-          -delta * THREE.MathUtils.lerp(1.08, 4.8, planet.rigidity),
-        );
-        planet.impact *= Math.exp(-delta * 5.8);
-
-        const radialAcceleration = THREE.MathUtils.clamp(
-          planet.radialOffset * 2.8,
-          -8.5,
-          8.5,
-        ) * (1 - planet.rigidity * 0.92);
-        planet.radialVelocity -= radialAcceleration * delta;
-        planet.radialVelocity *= Math.exp(
-          -delta * THREE.MathUtils.lerp(0.72, 5.4, planet.rigidity),
-        );
-        planet.radialVelocity = THREE.MathUtils.clamp(
-          planet.radialVelocity,
-          -6.4,
-          6.4,
-        );
-        planet.radialOffset += planet.radialVelocity * delta;
-        const minimumOffset =
-          this.getArchiveOrbitMinimumRadius(planet) - planet.radius;
-        const maximumOffset =
-          this.getArchiveOrbitMaximumRadius(planet) - planet.radius;
-        if (planet.radialOffset < minimumOffset) {
-          planet.radialOffset = minimumOffset;
-          planet.radialVelocity =
-            Math.abs(planet.radialVelocity) *
-            THREE.MathUtils.lerp(0.58, 0.08, planet.rigidity);
-        } else if (planet.radialOffset > maximumOffset) {
-          planet.radialOffset = maximumOffset;
-          planet.radialVelocity =
-            -Math.abs(planet.radialVelocity) *
-            THREE.MathUtils.lerp(0.58, 0.08, planet.rigidity);
-        }
-        planet.planet.position.x = planet.radius + planet.radialOffset;
-
-        const orbitalSpeed = planet.speed + planet.orbitalBoost;
-        const motionScale =
-          (this.reduceMotion ? 0.24 : 1) *
-          THREE.MathUtils.lerp(
-            1,
-            archiveGravityLockMotionScale,
-            planet.rigidity,
-          );
-        planet.pivot.rotation.y += orbitalSpeed * delta * motionScale;
-        planet.planet.rotation.y += orbitalSpeed * delta * 2.4 * motionScale;
-        planet.planet.rotation.x += orbitalSpeed * delta * 0.35 * motionScale;
-        planet.tiltVelocity -= planet.pivot.rotation.z * 4.2 * delta;
-        planet.tiltVelocity *= Math.exp(
-          -delta * THREE.MathUtils.lerp(1.45, 5.2, planet.rigidity),
-        );
-        planet.pivot.rotation.z += planet.tiltVelocity * delta;
-      }
-
-      const impactScale = planet.impact * (this.reduceMotion ? 0.045 : 0.12);
-      planet.planet.scale.set(
-        1 + impactScale,
-        1 - impactScale * 0.62,
-        1 + impactScale,
-      );
-      planet.bodyMaterial.emissiveIntensity =
-        0.7 + planet.impact * 1.45 + planet.rigidity * 0.72;
-
-      planet.planet.getWorldPosition(planet.worldPosition);
-      this.updateArchivePlanetFootprint(planet, planetIndex);
-      if (!planet.pivot.visible) {
-        planet.playerContact = false;
-        continue;
-      }
-      if (held) {
-        planet.playerContact = false;
-        continue;
-      }
-
-      const playerDx = planet.worldPosition.x - this.playerPosition.x;
-      const playerDz = planet.worldPosition.z - this.playerPosition.z;
-      const playerContactRadius =
-        planet.collisionRadius + this.playerRadius + 0.12;
-      const playerContact =
-        playerDx * playerDx + playerDz * playerDz <
-        playerContactRadius ** 2;
-      const playerMoving = this.movement.lengthSq() > 0.0001;
-      const rigidContact = planet.rigidity >= 0.72;
-      const canRebound =
-        rigidContact
-          ? planet.collisionCooldown <= 0
-          : !planet.playerContact;
-      if (rigidContact && playerContact) {
-        const contactDistance = Math.max(
-          0.001,
-          Math.hypot(playerDx, playerDz),
-        );
-        const movementLength = Math.max(
-          0.001,
-          Math.hypot(this.movement.x, this.movement.z),
-        );
-        const awayX =
-          contactDistance > 0.001
-            ? -playerDx / contactDistance
-            : -this.movement.x / movementLength;
-        const awayZ =
-          contactDistance > 0.001
-            ? -playerDz / contactDistance
-            : -this.movement.z / movementLength;
-        this.playerPosition.set(
-          planet.worldPosition.x +
-            awayX * (playerContactRadius + 0.025),
-          this.playerPosition.y,
-          planet.worldPosition.z +
-            awayZ * (playerContactRadius + 0.025),
-        );
-        this.constrainToBounds(this.playerPosition);
-      }
-      if (playerMoving && playerContact && canRebound) {
-        const movementLength = Math.max(
-          0.001,
-          Math.hypot(this.movement.x, this.movement.z),
-        );
-        const directionX = this.movement.x / movementLength;
-        const directionZ = this.movement.z / movementLength;
-        const movementSpeed = movementLength / Math.max(delta, 0.001);
-        this.applyOrbitingPlanetImpulse(
-          planet,
-          directionX,
-          directionZ,
-          THREE.MathUtils.clamp(movementSpeed * 0.88, 2.8, 6.2),
-        );
-        if (!rigidContact) {
-          const playerRecoil = THREE.MathUtils.lerp(
-            0.2,
-            0.055,
-            planet.rigidity,
-          );
-          this.playerPosition.x -= directionX * playerRecoil;
-          this.playerPosition.z -= directionZ * playerRecoil;
-          this.constrainToBounds(this.playerPosition);
-        }
-        this.jumpHeight = Math.max(this.jumpHeight, 0.025);
-        this.jumpVelocity = Math.max(
-          this.jumpVelocity,
-          2.5 + planet.rigidity * 1.12,
-        );
-        this.announceArchiveOrbitPinball(
-          "Your boot catches the little world. Its neat orbit buckles sideways.",
-        );
-      }
-      // A locked world resolves the overlap immediately. Keeping this false
-      // allows another deliberate approach after the short impact cooldown,
-      // reproducing the climbable chain-bounce without firing every frame.
-      planet.playerContact = rigidContact ? false : playerContact;
-    }
-    if (this.archivePlanetFootprints) {
-      this.archivePlanetFootprints.instanceMatrix.needsUpdate = true;
-      if (this.archivePlanetFootprints.instanceColor) {
-        this.archivePlanetFootprints.instanceColor.needsUpdate = true;
-      }
-    }
-
-    this.resolveArchiveAsteroidPlanetCollisions();
-    this.resolveOrbitingPlanetCollisions();
-    this.updateArchiveOrbitOrder(delta);
-    this.updateArchiveAtlas(delta);
-    this.updateArchiveAscensionMilestone();
-  }
-
-  private getArchiveOrbitMinimumRadius(
-    planet: OrbitingPlanet,
-  ): number {
-    return (
-      archiveAtlasBarrierRadius +
-      planet.collisionRadius +
-      0.08
-    );
-  }
-
-  private getArchiveOrbitMaximumRadius(
-    planet: OrbitingPlanet,
-  ): number {
-    return Math.max(
-      this.getArchiveOrbitMinimumRadius(planet),
-      archiveOrbitOuterRadius - planet.collisionRadius,
-    );
-  }
-
-  private getArchiveOrbitRelativePosition(
-    worldPosition: THREE.Vector3,
-    target: THREE.Vector2,
-  ): THREE.Vector2 {
-    return target.set(
-      worldPosition.x - archiveAtlasX,
-      worldPosition.z - archiveAtlasZ,
-    );
-  }
-
-  private updateArchivePlanetFootprint(
-    planet: OrbitingPlanet,
-    index: number,
-  ): void {
-    const footprints = this.archivePlanetFootprints;
-    if (!footprints) return;
-
-    const contactRadius =
-      planet.collisionRadius + this.playerRadius + 0.12;
-    const visibleScale = planet.pivot.visible ? contactRadius : 0.0001;
-    this.archivePlanetFootprintDummy.position.set(
-      planet.worldPosition.x,
-      0.125,
-      planet.worldPosition.z,
-    );
-    this.archivePlanetFootprintDummy.rotation.set(-Math.PI / 2, 0, 0);
-    this.archivePlanetFootprintDummy.scale.set(
-      visibleScale,
-      visibleScale,
-      visibleScale,
-    );
-    this.archivePlanetFootprintDummy.updateMatrix();
-    footprints.setMatrixAt(index, this.archivePlanetFootprintDummy.matrix);
-    this.archivePlanetFootprintColor
-      .copy(this.archivePlanetFootprintRestColor)
-      .lerp(this.archivePlanetFootprintLockColor, planet.rigidity);
-    footprints.setColorAt(index, this.archivePlanetFootprintColor);
-  }
-
   private updateArchiveAsteroidShadow(): void {
     const asteroid = this.archiveAsteroid;
     const shadow = this.archiveAsteroidShadow;
@@ -6362,7 +5992,8 @@ export class PortfolioGame {
       ) ?? 0;
     const liftedHeight = Math.max(
       0,
-      asteroid.object.position.y - (supportHeight + asteroid.restingY),
+      asteroid.object.position.y -
+        (supportHeight + asteroid.restingY),
     );
     const floorOffset = placementSurface ? 0.012 : 0.125;
     const scale = 1 - Math.min(0.28, liftedHeight * 0.16);
@@ -6456,425 +6087,6 @@ export class PortfolioGame {
       endX,
       endZ,
     );
-  }
-
-  /**
-   * Height is route-agnostic: moving, clumped, or Thunder-locked planets can all
-   * form the ladder. The Archive update runs after planet contact chatter so the
-   * milestone remains the final status emitted on the qualifying frame.
-   */
-  private updateArchiveAscensionMilestone(): void {
-    if (
-      this.currentZone !== "archive" ||
-      this.archiveAscensionComplete ||
-      this.noclip ||
-      Math.max(
-        this.airbornePeakHeight,
-        this.surfaceOffset + this.jumpHeight,
-      ) < archiveAscensionHeight
-    ) {
-      return;
-    }
-    this.archiveAscensionComplete = true;
-    this.activateArchiveAscensionAtlas();
-    this.hooks.onStatus(
-      "The moving worlds hand you beyond the highest orbit. For one impossible moment, the Archive has a moon of its own.",
-      { kind: "achievement", title: "TO THE MOON" },
-    );
-  }
-
-  private activateArchiveAscensionAtlas(): void {
-    const atlas = this.archiveAtlas;
-    if (!atlas) return;
-    atlas.pulseAge = 0;
-    atlas.pulse.material.color.copy(archiveAtlasSilverLightColor);
-    atlas.pulse.visible = true;
-  }
-
-  private applyOrbitingPlanetImpulse(
-    planet: OrbitingPlanet,
-    directionX: number,
-    directionZ: number,
-    strength: number,
-  ): void {
-    const directionLength = Math.max(0.001, Math.hypot(directionX, directionZ));
-    const normalizedX = directionX / directionLength;
-    const normalizedZ = directionZ / directionLength;
-    const relativePosition = this.getArchiveOrbitRelativePosition(
-      planet.worldPosition,
-      this.tempOrbitPosition,
-    );
-    const radialLength = Math.max(
-      0.001,
-      relativePosition.length(),
-    );
-    const radialX = relativePosition.x / radialLength;
-    const radialZ = relativePosition.y / radialLength;
-    const tangentX = radialZ;
-    const tangentZ = -radialX;
-    const radialImpulse = normalizedX * radialX + normalizedZ * radialZ;
-    const tangentImpulse = normalizedX * tangentX + normalizedZ * tangentZ;
-    const responsiveStrength =
-      strength *
-      THREE.MathUtils.lerp(
-        1,
-        archiveGravityLockImpulseScale,
-        planet.rigidity,
-      );
-
-    planet.radialVelocity = THREE.MathUtils.clamp(
-      planet.radialVelocity + radialImpulse * responsiveStrength * 0.82,
-      -4.8,
-      4.8,
-    );
-    planet.orbitalBoost = THREE.MathUtils.clamp(
-      planet.orbitalBoost + tangentImpulse * responsiveStrength * 0.15,
-      -2.4,
-      2.4,
-    );
-    const tiltSign = planet.detail % 2 === 0 ? 1 : -1;
-    planet.tiltVelocity = THREE.MathUtils.clamp(
-      planet.tiltVelocity +
-        tangentImpulse * responsiveStrength * 0.055 +
-        radialImpulse * responsiveStrength * 0.028 * tiltSign,
-      -0.9,
-      0.9,
-    );
-    planet.impact = 1;
-    planet.collisionCooldown = Math.max(planet.collisionCooldown, 0.24);
-    this.markArchiveOrbitDisturbed();
-  }
-
-  private resolveArchiveAsteroidPlanetCollisions(): void {
-    for (const asteroid of this.archiveSpaceAsteroids) {
-      if (
-        !asteroid.enabled ||
-        asteroid === this.heldKickable ||
-        asteroid.velocity.lengthSq() < 0.2
-      ) {
-        continue;
-      }
-
-      for (const planet of this.orbitingPlanets) {
-        if (!planet.pivot.visible || planet.collisionCooldown > 0) continue;
-        const dx = asteroid.object.position.x - planet.worldPosition.x;
-        const dz = asteroid.object.position.z - planet.worldPosition.z;
-        const contact = asteroid.radius + planet.collisionRadius;
-        const distanceSquared = dx * dx + dz * dz;
-        if (distanceSquared >= contact * contact) continue;
-
-        const distance = Math.max(0.001, Math.sqrt(distanceSquared));
-        const normalX = dx / distance;
-        const normalZ = dz / distance;
-        const incoming =
-          asteroid.velocity.x * normalX + asteroid.velocity.z * normalZ;
-        if (incoming >= -0.08) continue;
-
-        const incomingX = asteroid.velocity.x;
-        const incomingZ = asteroid.velocity.z;
-        const speed = Math.max(0.001, Math.hypot(incomingX, incomingZ));
-        asteroid.velocity.x -= incoming * normalX * 1.9;
-        asteroid.velocity.z -= incoming * normalZ * 1.9;
-        asteroid.velocity.multiplyScalar(1.02);
-        asteroid.object.position.x =
-          planet.worldPosition.x + normalX * (contact + 0.035);
-        asteroid.object.position.z =
-          planet.worldPosition.z + normalZ * (contact + 0.035);
-        asteroid.kickCooldown = Math.max(asteroid.kickCooldown, 0.2);
-        this.applyOrbitingPlanetImpulse(
-          planet,
-          incomingX / speed,
-          incomingZ / speed,
-          THREE.MathUtils.clamp(speed * 0.72, 2.4, 6.4),
-        );
-        planet.collisionCooldown = 0.42;
-        this.announceArchiveOrbitPinball(
-          "Stone meets world with a bright, impossible clack. Both paths change.",
-        );
-      }
-    }
-  }
-
-  private resolveOrbitingPlanetCollisions(): void {
-    for (let leftIndex = 0; leftIndex < this.orbitingPlanets.length; leftIndex += 1) {
-      const left = this.orbitingPlanets[leftIndex];
-      if (!left?.pivot.visible || left.collisionCooldown > 0) continue;
-
-      for (
-        let rightIndex = leftIndex + 1;
-        rightIndex < this.orbitingPlanets.length;
-        rightIndex += 1
-      ) {
-        const right = this.orbitingPlanets[rightIndex];
-        if (!right?.pivot.visible || right.collisionCooldown > 0) continue;
-        const collisionChainActive =
-          Math.abs(left.radialOffset) > 0.08 ||
-          Math.abs(left.radialVelocity) > 0.18 ||
-          Math.abs(left.orbitalBoost) > 0.08 ||
-          left.impact > 0.08 ||
-          Math.abs(right.radialOffset) > 0.08 ||
-          Math.abs(right.radialVelocity) > 0.18 ||
-          Math.abs(right.orbitalBoost) > 0.08 ||
-          right.impact > 0.08;
-        if (!collisionChainActive) continue;
-        const dx = right.worldPosition.x - left.worldPosition.x;
-        const dz = right.worldPosition.z - left.worldPosition.z;
-        const contact = (left.collisionRadius + right.collisionRadius) * 0.92;
-        const distanceSquared = dx * dx + dz * dz;
-        if (distanceSquared >= contact * contact) continue;
-
-        const distance = Math.max(0.001, Math.sqrt(distanceSquared));
-        const normalX = dx / distance;
-        const normalZ = dz / distance;
-        const leftRelative = this.getArchiveOrbitRelativePosition(
-          left.worldPosition,
-          this.tempOrbitPosition,
-        );
-        const rightRelative = this.getArchiveOrbitRelativePosition(
-          right.worldPosition,
-          this.tempOrbitPositionB,
-        );
-        const leftRadius = Math.max(
-          0.001,
-          leftRelative.length(),
-        );
-        const rightRadius = Math.max(
-          0.001,
-          rightRelative.length(),
-        );
-        const leftTangentX = leftRelative.y / leftRadius;
-        const leftTangentZ = -leftRelative.x / leftRadius;
-        const rightTangentX = rightRelative.y / rightRadius;
-        const rightTangentZ = -rightRelative.x / rightRadius;
-        const baseMotionScale = this.reduceMotion ? 0.24 : 1;
-        const leftMotionScale =
-          baseMotionScale *
-          THREE.MathUtils.lerp(
-            1,
-            archiveGravityLockMotionScale,
-            left.rigidity,
-          );
-        const rightMotionScale =
-          baseMotionScale *
-          THREE.MathUtils.lerp(
-            1,
-            archiveGravityLockMotionScale,
-            right.rigidity,
-          );
-        const leftVelocityX =
-          leftTangentX *
-            (left.speed + left.orbitalBoost) *
-            leftRadius *
-            leftMotionScale +
-          (leftRelative.x / leftRadius) * left.radialVelocity;
-        const leftVelocityZ =
-          leftTangentZ *
-            (left.speed + left.orbitalBoost) *
-            leftRadius *
-            leftMotionScale +
-          (leftRelative.y / leftRadius) * left.radialVelocity;
-        const rightVelocityX =
-          rightTangentX *
-            (right.speed + right.orbitalBoost) *
-            rightRadius *
-            rightMotionScale +
-          (rightRelative.x / rightRadius) * right.radialVelocity;
-        const rightVelocityZ =
-          rightTangentZ *
-            (right.speed + right.orbitalBoost) *
-            rightRadius *
-            rightMotionScale +
-          (rightRelative.y / rightRadius) * right.radialVelocity;
-        const closingSpeed =
-          (leftVelocityX - rightVelocityX) * normalX +
-          (leftVelocityZ - rightVelocityZ) * normalZ;
-        const overlap = contact - distance;
-        if (closingSpeed <= 0.04 && overlap < 0.16) continue;
-
-        const impactStrength = THREE.MathUtils.clamp(
-          Math.max(1.6, closingSpeed * 0.58),
-          1.6,
-          5.4,
-        );
-        this.applyOrbitingPlanetImpulse(
-          left,
-          -normalX,
-          -normalZ,
-          impactStrength,
-        );
-        this.applyOrbitingPlanetImpulse(
-          right,
-          normalX,
-          normalZ,
-          impactStrength,
-        );
-        const leftMobility = THREE.MathUtils.lerp(
-          1,
-          archiveGravityLockImpulseScale,
-          left.rigidity,
-        );
-        const rightMobility = THREE.MathUtils.lerp(
-          1,
-          archiveGravityLockImpulseScale,
-          right.rigidity,
-        );
-        const totalMobility = Math.max(0.001, leftMobility + rightMobility);
-        const correction =
-          overlap * 0.68 * Math.max(leftMobility, rightMobility);
-        const leftCorrection =
-          correction * (leftMobility / totalMobility);
-        const rightCorrection =
-          correction * (rightMobility / totalMobility);
-        if (leftRadius <= rightRadius) {
-          left.radialOffset -= leftCorrection;
-          right.radialOffset += rightCorrection;
-        } else {
-          left.radialOffset += leftCorrection;
-          right.radialOffset -= rightCorrection;
-        }
-        left.collisionCooldown = 0.46;
-        right.collisionCooldown = 0.46;
-        this.announceArchiveOrbitPinball(
-          "Two wandering worlds meet. Their paths trade momentum.",
-        );
-      }
-    }
-  }
-
-  private announceArchiveOrbitPinball(message: string): void {
-    if (this.archiveOrbitPinballAnnounced) return;
-    this.archiveOrbitPinballAnnounced = true;
-    this.hooks.onStatus(message);
-  }
-
-  private markArchiveOrbitDisturbed(): void {
-    this.archiveOrbitDisturbed = true;
-    this.archiveOrbitRestoreDwell = 0;
-    const atlas = this.archiveAtlas;
-    if (!atlas || atlas.pulseAge >= 1.65) return;
-    atlas.pulseAge = 1.65;
-    atlas.globe.material.emissiveIntensity = 0.9;
-    atlas.orbit.material.emissiveIntensity = 0;
-    atlas.light.intensity = 0;
-    atlas.pulse.visible = false;
-  }
-
-  private updateArchiveOrbitOrder(delta: number): void {
-    if (
-      !this.archiveAtlas ||
-      !this.archiveOrbitDisturbed ||
-      this.orbitTelekinesisHolds.size > 0
-    ) {
-      this.archiveOrbitRestoreDwell = 0;
-      return;
-    }
-    const ordered = this.orbitingPlanets.every(
-      (planet) =>
-        Math.abs(planet.radialOffset) < 0.065 &&
-        Math.abs(planet.radialVelocity) < 0.14 &&
-        Math.abs(planet.orbitalBoost) < 0.035 &&
-        Math.abs(planet.tiltVelocity) < 0.045 &&
-        Math.abs(planet.pivot.rotation.z) < 0.045,
-    );
-    this.archiveOrbitRestoreDwell = ordered
-      ? this.archiveOrbitRestoreDwell + delta
-      : 0;
-    if (this.archiveOrbitRestoreDwell < 0.82) return;
-
-    this.archiveOrbitDisturbed = false;
-    this.archiveOrbitRestoreDwell = 0;
-    this.archiveAtlas.pulseAge = 0;
-    this.archiveAtlas.pulse.material.color.setHex(palette.cyan);
-    this.archiveAtlas.pulse.visible = true;
-    this.hooks.onStatus(
-      "The last wandering world finds its old line. The atlas answers in cyan.",
-    );
-  }
-
-  private updateArchiveAtlas(delta: number): void {
-    const atlas = this.archiveAtlas;
-    if (!atlas) return;
-    const ascensionTarget = this.archiveAscensionComplete ? 1 : 0;
-    const ascensionFollow = this.reduceMotion
-      ? 1
-      : 1 - Math.exp(-delta * 2.4);
-    atlas.ascensionBlend = THREE.MathUtils.lerp(
-      atlas.ascensionBlend,
-      ascensionTarget,
-      ascensionFollow,
-    );
-    const ascension = THREE.MathUtils.smoothstep(
-      atlas.ascensionBlend,
-      0,
-      1,
-    );
-
-    let flare = 0;
-    if (atlas.pulseAge < 1.65) {
-      atlas.pulseAge += delta;
-      const progress = Math.min(1, atlas.pulseAge / 1.65);
-      flare = Math.sin(progress * Math.PI);
-      atlas.pulse.material.opacity = (1 - progress) * 0.78;
-      atlas.pulse.scale.setScalar(
-        this.reduceMotion ? 1.2 : 0.72 + progress * 2.15,
-      );
-      if (progress >= 1) atlas.pulse.visible = false;
-    }
-
-    atlas.globe.material.color.lerpColors(
-      archiveAtlasRestColor,
-      archiveAtlasSilverColor,
-      ascension,
-    );
-    atlas.globe.material.emissive.lerpColors(
-      archiveAtlasRestEmissive,
-      archiveAtlasSilverEmissive,
-      ascension,
-    );
-    atlas.globe.material.metalness = THREE.MathUtils.lerp(
-      0.25,
-      0.88,
-      ascension,
-    );
-    atlas.globe.material.roughness = THREE.MathUtils.lerp(
-      0.38,
-      0.18,
-      ascension,
-    );
-    atlas.globe.material.emissiveIntensity =
-      0.9 + ascension * 0.62 + flare * 2.7;
-    atlas.orbit.material.color.lerpColors(
-      archiveAtlasRestOrbitColor,
-      archiveAtlasSilverOrbitColor,
-      ascension,
-    );
-    atlas.orbit.material.emissive.lerpColors(
-      archiveAtlasRestLightColor,
-      archiveAtlasSilverLightColor,
-      ascension,
-    );
-    atlas.orbit.material.emissiveIntensity =
-      ascension * 0.48 + flare * 2.2;
-    atlas.star.visible = ascension > 0.005;
-    atlas.starMaterial.opacity = ascension * (0.8 + flare * 0.2);
-    const starBreath =
-      this.reduceMotion
-        ? 1
-        : 1 + Math.sin(this.elapsed * 2.2) * 0.065 * ascension;
-    atlas.star.scale.setScalar(
-      THREE.MathUtils.lerp(0.3, starBreath, ascension),
-    );
-    atlas.star.rotation.y +=
-      delta * (this.reduceMotion ? 0.08 : 0.42) * ascension;
-    atlas.light.color.lerpColors(
-      archiveAtlasRestLightColor,
-      archiveAtlasSilverLightColor,
-      ascension,
-    );
-    const persistentLight =
-      ascension * (this.quality === "low" ? 1.35 : 2.35);
-    atlas.light.intensity =
-      persistentLight + flare * (this.quality === "low" ? 3.8 : 6.2);
   }
 
   private createDigitTexture(digit: "0" | "1"): THREE.CanvasTexture {
@@ -8101,6 +7313,7 @@ export class PortfolioGame {
 
   private clearZone(): void {
     this.archiveSignalPuzzle.unmount();
+    this.archiveOrbitPlayground.unmount();
     this.fallsRuneRitual.unmount();
     this.pongChallenge.unmount();
     this.stashTravelingAsteroidForZoneTeardown();
@@ -8129,7 +7342,6 @@ export class PortfolioGame {
     this.kickables.length = 0;
     this.portalNetwork.clear();
     this.telescopeRigs.length = 0;
-    this.orbitingPlanets.length = 0;
     this.playerOccluders.length = 0;
     this.setPlayerOcclusionOutlineVisible(false);
     this.playerShadow.visible = true;
@@ -8163,17 +7375,10 @@ export class PortfolioGame {
     this.activePlatform = null;
     this.shadowSurfaceY = 0.16;
     this.shadowVerticalDistance = 0;
-    this.archiveAtlas = null;
     this.archiveDataGlass = null;
-    this.archivePlanetFootprints = null;
-    this.archiveOrbitDisturbed = false;
-    this.archiveOrbitRestoreDwell = 0;
-    this.archiveOrbitTelekinesisAnnounced = false;
-    this.archiveSpaceAsteroids.length = 0;
     this.archiveAsteroid = null;
     this.archiveAsteroidShadow = null;
     this.archiveMonitorTarget = null;
-    this.archiveOrbitPinballAnnounced = false;
     this.spellRing.visible = false;
     this.digitStormAge = this.digitStormDuration;
     for (const cloud of this.digitClouds) cloud.points.visible = false;
@@ -9144,32 +8349,7 @@ export class PortfolioGame {
     foundation.castShadow = false;
     archiveFloor.castShadow = false;
 
-    const starAtlas = this.createStarGlobe(
-      root,
-      archiveAtlasX,
-      archiveAtlasZ,
-    );
-    this.registerClimbableBox(
-      starAtlas,
-      "archive-star-atlas",
-      "You balance atop the turning atlas. Its brass orbit circles beneath your boots.",
-      undefined,
-      false,
-    );
-    this.addInteraction(
-      "star-globe",
-      "Read the star atlas",
-      archiveAtlasX,
-      archiveAtlasZ,
-      2.7,
-      () => {
-        this.hooks.onStatus(
-          this.archiveAscensionComplete
-            ? "A cold star burns inside the silver atlas. Its wireframe sky has taken your impossible ascent for a new coordinate."
-            : "A dark wireframe sky turns inside the atlas, charting no familiar stars.",
-        );
-      },
-    );
+    this.archiveOrbitPlayground.mount(root);
 
     const archiveTelescope = this.createTelescope(root, -8.2, -2.8);
     this.addStaticBox(-8.2, 0.7, -2.8, 0.7, 0.8, 0.7);
@@ -9214,27 +8394,6 @@ export class PortfolioGame {
       this.hooks.onStatus("Twelve terminals answer. One appears unreasonably happy to see you. ☺");
     });
 
-    this.createOrbitingMoon(root, -8.4, -7.2);
-    for (const [radius, height, size, material, phase, speed, ringed, detail] of [
-      [9.6, 3.4, 0.82, this.materials.cyan, 0.2, 0.11, true, 0],
-      [7.2, 4.35, 0.58, this.materials.violet, 1.45, -0.16, false, 1],
-      [11.4, 2.75, 0.74, this.materials.amber, 2.7, 0.085, true, 2],
-      [5.4, 3.05, 0.46, this.materials.green, 4.1, -0.21, false, 3],
-      [12.2, 4.7, 0.52, this.materials.coral, 5.25, 0.13, false, 4],
-    ] as const) {
-      this.createRoomPlanet(
-        root,
-        radius,
-        height,
-        size,
-        material,
-        phase,
-        speed,
-        ringed,
-        detail,
-      );
-    }
-    this.createArchivePlanetFootprints(root);
     this.createPinballAsteroid(root, -8.2, 1.2, 0.66);
     for (const [x, y, z, size] of [
       [-10.5, 2.1, 3.8, 0.9],
@@ -12016,7 +11175,7 @@ export class PortfolioGame {
       this.pongChallenge.hasPointerDrag() ||
       this.mathInstanceDragHold !== null ||
       this.archiveSignalPuzzle.hasPointerDrag() ||
-      this.orbitTelekinesisHolds.size > 0 ||
+      this.archiveOrbitPlayground.hasPointerDrag() ||
       (this.ambientGrid?.hasDrag() ?? false)
     );
   }
@@ -12034,7 +11193,7 @@ export class PortfolioGame {
 
   private cancelNonPongPointerDrags(notifyMath = true): void {
     this.cancelTelekinesisHold();
-    this.cancelAllOrbitingPlanetTelekinesis();
+    this.archiveOrbitPlayground.cancelPointerDrags();
     this.cancelMathInstanceDrag(notifyMath);
     this.archiveSignalPuzzle.cancelPointerDrag();
     this.cancelAmbientGridDrag();
@@ -12294,131 +11453,6 @@ export class PortfolioGame {
     });
     parent.add(group);
     this.registerPlayerOccluder(group);
-  }
-
-  private createStarGlobe(
-    parent: THREE.Group,
-    x: number,
-    z: number,
-  ): THREE.Group {
-    const group = new THREE.Group();
-    group.name = "archive-star-atlas";
-    group.position.set(x, 0, z);
-    const globeMaterial = new THREE.MeshStandardMaterial({
-      color: 0x081521,
-      emissive: 0x0b3040,
-      emissiveIntensity: 0.9,
-      roughness: 0.38,
-      metalness: 0.25,
-      wireframe: true,
-    });
-    const globe = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(1.65, 2),
-      globeMaterial,
-    );
-    globe.position.y = 2.2;
-    group.add(globe);
-    const orbitMaterial = new THREE.MeshStandardMaterial({
-      color: palette.brass,
-      emissive: palette.cyan,
-      emissiveIntensity: 0,
-      roughness: 0.44,
-      metalness: 0.58,
-    });
-    const orbit = new THREE.Mesh(
-      new THREE.TorusGeometry(2, 0.08, 5, 32),
-      orbitMaterial,
-    );
-    orbit.position.y = 2.2;
-    orbit.rotation.x = 0.6;
-    orbit.rotation.y = 0.3;
-    group.add(orbit);
-
-    const starShape = new THREE.Shape();
-    for (let point = 0; point < 8; point += 1) {
-      const radius = point % 2 === 0 ? 0.52 : 0.15;
-      const angle = Math.PI / 2 + (point / 8) * Math.PI * 2;
-      const pointX = Math.cos(angle) * radius;
-      const pointY = Math.sin(angle) * radius;
-      if (point === 0) starShape.moveTo(pointX, pointY);
-      else starShape.lineTo(pointX, pointY);
-    }
-    starShape.closePath();
-    const starMaterial = new THREE.MeshBasicMaterial({
-      color: archiveAtlasSilverLightColor,
-      transparent: true,
-      opacity: 0,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide,
-      toneMapped: false,
-    });
-    const star = new THREE.Group();
-    star.name = "archive-ascension-star";
-    star.position.y = 2.2;
-    star.visible = this.archiveAscensionComplete;
-    const starFace = new THREE.Mesh(
-      new THREE.ShapeGeometry(starShape),
-      starMaterial,
-    );
-    starFace.rotation.x = -Math.PI / 2;
-    starFace.renderOrder = 3;
-    star.add(starFace);
-    group.add(star);
-
-    const base = addCylinder(
-      group,
-      1.2,
-      1.5,
-      0.45,
-      10,
-      [0, 0.22, 0],
-      this.materials.brass,
-    );
-    base.castShadow = false;
-
-    const pulse = new THREE.Mesh(
-      new THREE.RingGeometry(1.52, 1.68, 32),
-      new THREE.MeshBasicMaterial({
-        color: palette.cyan,
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        side: THREE.DoubleSide,
-      }),
-    );
-    pulse.rotation.x = -Math.PI / 2;
-    pulse.position.y = 0.47;
-    pulse.visible = false;
-    pulse.renderOrder = 4;
-    group.add(pulse);
-
-    const light = new THREE.PointLight(palette.cyan, 0, 8.5, 2);
-    light.position.y = 2.2;
-    light.castShadow = false;
-    group.add(light);
-
-    this.animatedItems.push({
-      object: globe,
-      originY: globe.position.y,
-      phase: 0,
-      amplitude: 0.04,
-      rotationSpeed: 0.16,
-    });
-    parent.add(group);
-    this.archiveAtlas = {
-      globe,
-      orbit,
-      star,
-      starMaterial,
-      pulse,
-      light,
-      pulseAge: 2,
-      ascensionBlend: this.archiveAscensionComplete ? 1 : 0,
-    };
-    this.updateArchiveAtlas(0);
-    return group;
   }
 
   private createArchiveDataGlass(
@@ -12891,177 +11925,6 @@ export class PortfolioGame {
     parent.add(smile);
   }
 
-  private createOrbitingMoon(parent: THREE.Group, x: number, z: number): void {
-    const moonSystem = new THREE.Group();
-    moonSystem.position.set(x, 0, z);
-    const moon = new THREE.Mesh(
-      new THREE.DodecahedronGeometry(1.15, 1),
-      this.materials.stone,
-    );
-    moon.position.y = 3;
-    moon.scale.set(1, 0.92, 1);
-    moon.castShadow = false;
-    moonSystem.add(moon);
-    const orbit = new THREE.Mesh(
-      new THREE.TorusGeometry(1.62, 0.045, 5, 28),
-      this.materials.cyanSoft,
-    );
-    orbit.position.y = 3;
-    orbit.rotation.set(0.72, 0.18, 0.1);
-    moonSystem.add(orbit);
-    parent.add(moonSystem);
-    this.animatedItems.push({
-      object: moonSystem,
-      originY: moonSystem.position.y,
-      phase: 2.8,
-      amplitude: 0.12,
-      rotationSpeed: 0.08,
-    });
-  }
-
-  private createRoomPlanet(
-    parent: THREE.Group,
-    radius: number,
-    height: number,
-    size: number,
-    material: THREE.Material,
-    phase: number,
-    speed: number,
-    ringed: boolean,
-    detail: number,
-  ): void {
-    const pivot = new THREE.Group();
-    pivot.position.set(archiveAtlasX, 0, archiveAtlasZ);
-    pivot.rotation.y = phase;
-    const planet = new THREE.Group();
-    planet.position.set(radius, height, 0);
-    const sourceColor =
-      material instanceof THREE.MeshBasicMaterial ||
-      material instanceof THREE.MeshStandardMaterial
-        ? material.color.clone()
-        : new THREE.Color(palette.cyan);
-    const geometry = new THREE.DodecahedronGeometry(size, 0);
-    const positions = geometry.getAttribute("position");
-    const faceColors = new Float32Array(positions.count * 3);
-    for (let vertex = 0; vertex < positions.count; vertex += 1) {
-      const face = Math.floor(vertex / 3);
-      const shade = 0.58 + ((face + detail * 2) % 5) * 0.085;
-      const faceColor = sourceColor.clone().multiplyScalar(shade);
-      faceColors[vertex * 3] = faceColor.r;
-      faceColors[vertex * 3 + 1] = faceColor.g;
-      faceColors[vertex * 3 + 2] = faceColor.b;
-    }
-    geometry.setAttribute("color", new THREE.BufferAttribute(faceColors, 3));
-    const bodyMaterial = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      vertexColors: true,
-      emissive: sourceColor.clone().multiplyScalar(0.18),
-      emissiveIntensity: 0.7,
-      flatShading: true,
-      roughness: 0.68,
-      metalness: 0.08,
-    });
-    const body = new THREE.Mesh(
-      geometry,
-      bodyMaterial,
-    );
-    body.scale.set(1, 0.92, 1);
-    body.rotation.set(phase * 0.11, phase * 0.17, detail * 0.19);
-    body.castShadow = false;
-    body.receiveShadow = true;
-    planet.add(body);
-    if (ringed) {
-      const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(size * 1.42, size * 0.075, 5, 24),
-        this.materials.parchment,
-      );
-      ring.rotation.set(0.8, 0.15, 0.2);
-      ring.castShadow = false;
-      planet.add(ring);
-    }
-    pivot.add(planet);
-    parent.add(pivot);
-    pivot.visible =
-      this.quality === "high" ||
-      (this.quality === "medium" && detail < 4) ||
-      detail < 2;
-    this.orbitingPlanets.push({
-      pivot,
-      planet,
-      bodyMaterial,
-      speed,
-      detail,
-      radius,
-      collisionRadius: size * (ringed ? 1.34 : 1.04),
-      orbitalBoost: 0,
-      radialOffset: 0,
-      radialVelocity: 0,
-      tiltVelocity: 0,
-      impact: 0,
-      collisionCooldown: 0,
-      playerContact: false,
-      rigidity: 0,
-      rigidUntil: 0,
-      worldPosition: new THREE.Vector3(),
-    });
-  }
-
-  private createArchivePlanetFootprints(parent: THREE.Group): void {
-    if (this.orbitingPlanets.length === 0) return;
-
-    const canvas = document.createElement("canvas");
-    canvas.width = 128;
-    canvas.height = 128;
-    const context = canvas.getContext("2d");
-    if (context) {
-      const shadow = context.createRadialGradient(64, 64, 3, 64, 64, 61);
-      shadow.addColorStop(0, "rgba(2, 7, 10, 0.54)");
-      shadow.addColorStop(0.64, "rgba(2, 7, 10, 0.34)");
-      shadow.addColorStop(0.88, "rgba(2, 7, 10, 0.12)");
-      shadow.addColorStop(0.96, "rgba(2, 7, 10, 0)");
-      context.fillStyle = shadow;
-      context.beginPath();
-      context.arc(64, 64, 62, 0, Math.PI * 2);
-      context.fill();
-
-      context.strokeStyle = "rgba(232, 253, 255, 0.95)";
-      context.lineWidth = 2.5;
-      context.beginPath();
-      context.arc(64, 64, 61, 0, Math.PI * 2);
-      context.stroke();
-
-      context.fillStyle = "rgba(238, 254, 255, 0.92)";
-      context.beginPath();
-      context.arc(64, 64, 3.5, 0, Math.PI * 2);
-      context.fill();
-    }
-
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.generateMipmaps = false;
-    texture.minFilter = THREE.LinearFilter;
-    texture.magFilter = THREE.LinearFilter;
-    const material = new THREE.MeshBasicMaterial({
-      map: texture,
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.9,
-      depthWrite: false,
-      toneMapped: false,
-      vertexColors: true,
-    });
-    const footprints = new THREE.InstancedMesh(
-      new THREE.PlaneGeometry(2, 2),
-      material,
-      this.orbitingPlanets.length,
-    );
-    footprints.frustumCulled = false;
-    footprints.renderOrder = groundProjectionRenderOrder;
-    footprints.count = this.orbitingPlanets.length;
-    parent.add(footprints);
-    this.archivePlanetFootprints = footprints;
-  }
-
   private createPinballAsteroidShadow(size: number): AsteroidShadow {
     const shadow = new THREE.Mesh(
       new THREE.CircleGeometry(size * 0.9, 18),
@@ -13182,7 +12045,7 @@ export class PortfolioGame {
       this.portalNetwork.pulseDestination(state.arrivalFrom);
     }
     if (this.currentZone === "archive") {
-      this.archiveSpaceAsteroids.push(kickable);
+      this.archiveOrbitPlayground.registerAsteroid(kickable);
     }
   }
 
@@ -13295,7 +12158,7 @@ export class PortfolioGame {
       "The loose asteroid skitters across the floor, faster than its size suggests.",
     );
     this.archiveAsteroid = kickable;
-    this.archiveSpaceAsteroids.push(kickable);
+    this.archiveOrbitPlayground.registerAsteroid(kickable);
   }
 
   private createFloatingAsteroid(
@@ -13330,7 +12193,7 @@ export class PortfolioGame {
       0.997,
       "A floating asteroid slips from its station and glides into the room.",
     );
-    this.archiveSpaceAsteroids.push(kickable);
+    this.archiveOrbitPlayground.registerAsteroid(kickable);
   }
 
   private batchStaticVisuals(): void {
@@ -13365,13 +12228,12 @@ export class PortfolioGame {
     protect(this.splashBurst?.drops ?? null);
     protect(this.runeAltar?.object ?? null);
     this.fallsRuneRitual.forEachDynamicObject(protect);
-    protect(this.archiveAtlas?.pulse ?? null);
+    this.archiveOrbitPlayground.forEachDynamicObject(protect);
     this.archiveSignalPuzzle.forEachDynamicObject(protect);
     this.voidTurtleRide.forEachDynamicObject(protect);
     this.hanoiPuzzle.forEachDynamicObject(protect);
     for (const kickable of this.kickables) protect(kickable.object);
     for (const telescope of this.telescopeRigs) protect(telescope.pivot);
-    for (const planet of this.orbitingPlanets) protect(planet.pivot);
     for (const npc of this.wanderingNpcs) protect(npc.group);
     for (const lantern of this.lanterns) protect(lantern.light);
     for (const rack of this.serverRacks) {
@@ -14397,281 +13259,6 @@ export class PortfolioGame {
     return pointed;
   }
 
-  private getPrimaryHeldOrbitingPlanet(): OrbitingPlanet | null {
-    for (const hold of this.orbitTelekinesisHolds.values()) {
-      return hold.planet;
-    }
-    return null;
-  }
-
-  private isOrbitingPlanetVisibleAtQuality(planet: OrbitingPlanet): boolean {
-    return (
-      this.quality === "high" ||
-      (this.quality === "medium" && planet.detail < 4) ||
-      planet.detail < 2
-    );
-  }
-
-  private findPointedOrbitingPlanet(
-    event: PointerEvent,
-  ): OrbitingPlanet | null {
-    if (this.currentZone !== "archive" || this.orbitingPlanets.length === 0) {
-      return null;
-    }
-    const candidates = this.orbitingPlanets.filter(
-      (planet) => planet.pivot.visible,
-    );
-    if (candidates.length === 0) return null;
-    this.updatePointerRay(event);
-    const kickableObjects = this.kickables
-      .filter((kickable) => kickable.enabled)
-      .map((kickable) => kickable.object);
-    const hits = this.pointerRaycaster.intersectObjects(
-      [
-        ...candidates.map((planet) => planet.planet),
-        ...kickableObjects,
-      ],
-      true,
-    );
-    for (const hit of hits) {
-      const planet = candidates.find(
-        (candidate) =>
-          hit.object === candidate.planet ||
-          candidate.planet.getObjectById(hit.object.id) !== undefined,
-      );
-      if (planet) {
-        return this.heldOrbitingPlanets.has(planet) ? null : planet;
-      }
-      if (
-        kickableObjects.some(
-          (object) =>
-            hit.object === object ||
-            object.getObjectById(hit.object.id) !== undefined,
-        )
-      ) {
-        return null;
-      }
-    }
-    return null;
-  }
-
-  private beginOrbitingPlanetTelekinesis(
-    planet: OrbitingPlanet,
-    event: PointerEvent,
-  ): boolean {
-    if (
-      this.orbitTelekinesisHolds.has(event.pointerId) ||
-      this.heldOrbitingPlanets.has(planet)
-    ) {
-      return false;
-    }
-    planet.planet.getWorldPosition(planet.worldPosition);
-    const relativePosition = this.getArchiveOrbitRelativePosition(
-      planet.worldPosition,
-      this.tempOrbitPosition,
-    );
-    const currentRadius = THREE.MathUtils.clamp(
-      relativePosition.length(),
-      this.getArchiveOrbitMinimumRadius(planet),
-      this.getArchiveOrbitMaximumRadius(planet),
-    );
-    planet.pivot.rotation.z = 0;
-    planet.tiltVelocity = 0;
-    planet.pivot.rotation.y = Math.atan2(
-      -relativePosition.y,
-      relativePosition.x,
-    );
-    planet.radialOffset = currentRadius - planet.radius;
-    planet.radialVelocity = 0;
-    planet.planet.position.x = currentRadius;
-    planet.planet.getWorldPosition(planet.worldPosition);
-
-    const hold: OrbitTelekinesisHold = {
-      planet,
-      plane: new THREE.Plane(up, -planet.worldPosition.y),
-      point: new THREE.Vector3(),
-      previousPoint: planet.worldPosition.clone(),
-      velocity: new THREE.Vector3(),
-      grabOffset: new THREE.Vector3(),
-      previousTime: event.timeStamp,
-      moved: false,
-    };
-    this.updatePointerRay(event);
-    if (
-      this.pointerRaycaster.ray.intersectPlane(
-        hold.plane,
-        hold.point,
-      )
-    ) {
-      hold.grabOffset.set(
-        planet.worldPosition.x - hold.point.x,
-        0,
-        planet.worldPosition.z - hold.point.z,
-      );
-    }
-    this.orbitTelekinesisHolds.set(event.pointerId, hold);
-    this.heldOrbitingPlanets.add(planet);
-    planet.pivot.visible = true;
-    this.canvas.setPointerCapture(event.pointerId);
-    this.canvas.style.cursor = "grabbing";
-    event.preventDefault();
-    return true;
-  }
-
-  private updateOrbitingPlanetTelekinesis(event: PointerEvent): void {
-    const hold = this.orbitTelekinesisHolds.get(event.pointerId);
-    if (!hold) return;
-    const { planet } = hold;
-    this.updatePointerRay(event);
-    if (
-      !this.pointerRaycaster.ray.intersectPlane(
-        hold.plane,
-        hold.point,
-      )
-    ) {
-      return;
-    }
-
-    const rawWorldX = hold.point.x + hold.grabOffset.x;
-    const rawWorldZ = hold.point.z + hold.grabOffset.z;
-    const rawRelativeX = rawWorldX - archiveAtlasX;
-    const rawRelativeZ = rawWorldZ - archiveAtlasZ;
-    const rawRadius = Math.max(
-      0.001,
-      Math.hypot(rawRelativeX, rawRelativeZ),
-    );
-    const radius = THREE.MathUtils.clamp(
-      rawRadius,
-      this.getArchiveOrbitMinimumRadius(planet),
-      this.getArchiveOrbitMaximumRadius(planet),
-    );
-    const targetX =
-      archiveAtlasX + (rawRelativeX / rawRadius) * radius;
-    const targetZ =
-      archiveAtlasZ + (rawRelativeZ / rawRadius) * radius;
-    const deltaTime = Math.max(
-      1 / 120,
-      Math.min(0.08, (event.timeStamp - hold.previousTime) / 1000),
-    );
-    hold.velocity.set(
-      (targetX - hold.previousPoint.x) / deltaTime,
-      0,
-      (targetZ - hold.previousPoint.z) / deltaTime,
-    );
-    const speed = Math.hypot(hold.velocity.x, hold.velocity.z);
-    if (speed > 12) {
-      hold.velocity.multiplyScalar(12 / speed);
-    }
-
-    const movementSquared =
-      (targetX - hold.previousPoint.x) ** 2 +
-      (targetZ - hold.previousPoint.z) ** 2;
-    if (movementSquared > 0.0004) {
-      hold.moved = true;
-      this.markArchiveOrbitDisturbed();
-    }
-    planet.pivot.rotation.y = Math.atan2(
-      -(targetZ - archiveAtlasZ),
-      targetX - archiveAtlasX,
-    );
-    planet.pivot.rotation.z = 0;
-    planet.radialOffset = radius - planet.radius;
-    planet.radialVelocity = 0;
-    planet.tiltVelocity = 0;
-    planet.planet.position.x = radius;
-    planet.impact = 1;
-    planet.planet.getWorldPosition(planet.worldPosition);
-    hold.previousPoint.copy(planet.worldPosition);
-    hold.previousTime = event.timeStamp;
-    event.preventDefault();
-  }
-
-  private releaseOrbitingPlanetTelekinesis(event: PointerEvent): boolean {
-    const hold = this.orbitTelekinesisHolds.get(event.pointerId);
-    if (!hold) return false;
-    const { planet } = hold;
-
-    const staleVelocity = event.timeStamp - hold.previousTime > 110;
-    if (staleVelocity) hold.velocity.set(0, 0, 0);
-    if (hold.moved) {
-      planet.planet.getWorldPosition(planet.worldPosition);
-      const relativePosition = this.getArchiveOrbitRelativePosition(
-        planet.worldPosition,
-        this.tempOrbitPosition,
-      );
-      const radius = Math.max(
-        0.001,
-        relativePosition.length(),
-      );
-      const radialX = relativePosition.x / radius;
-      const radialZ = relativePosition.y / radius;
-      const tangentX = radialZ;
-      const tangentZ = -radialX;
-      const radialSpeed =
-        hold.velocity.x * radialX + hold.velocity.z * radialZ;
-      const tangentialSpeed =
-        hold.velocity.x * tangentX + hold.velocity.z * tangentZ;
-      const releaseMobility = THREE.MathUtils.lerp(
-        1,
-        archiveGravityLockImpulseScale,
-        planet.rigidity,
-      );
-      planet.radialVelocity = THREE.MathUtils.clamp(
-        radialSpeed * releaseMobility,
-        -6.4,
-        6.4,
-      );
-      planet.orbitalBoost = THREE.MathUtils.clamp(
-        planet.orbitalBoost +
-          (tangentialSpeed /
-            Math.max(this.getArchiveOrbitMinimumRadius(planet), radius)) *
-            releaseMobility,
-        -2.4,
-        2.4,
-      );
-      planet.tiltVelocity = THREE.MathUtils.clamp(
-        tangentialSpeed * 0.035 * releaseMobility,
-        -0.72,
-        0.72,
-      );
-      planet.impact = 1;
-      planet.collisionCooldown = 0.42;
-      this.markArchiveOrbitDisturbed();
-      if (!this.archiveOrbitTelekinesisAnnounced) {
-        this.archiveOrbitTelekinesisAnnounced = true;
-        this.hooks.onStatus(
-          "The released world catches the atlas curve. Its new speed remains entirely your fault.",
-        );
-      }
-    }
-
-    this.orbitTelekinesisHolds.delete(event.pointerId);
-    this.heldOrbitingPlanets.delete(planet);
-    planet.pivot.visible = this.isOrbitingPlanetVisibleAtQuality(planet);
-    if (this.canvas.hasPointerCapture(event.pointerId)) {
-      this.canvas.releasePointerCapture(event.pointerId);
-    }
-    this.syncPointerDragCursor("grab");
-    event.preventDefault();
-    return true;
-  }
-
-  private cancelAllOrbitingPlanetTelekinesis(): void {
-    if (this.orbitTelekinesisHolds.size === 0) return;
-    const holds = [...this.orbitTelekinesisHolds.entries()];
-    this.orbitTelekinesisHolds.clear();
-    this.heldOrbitingPlanets.clear();
-    for (const [pointerId, hold] of holds) {
-      hold.planet.pivot.visible = this.isOrbitingPlanetVisibleAtQuality(
-        hold.planet,
-      );
-      if (this.canvas.hasPointerCapture(pointerId)) {
-        this.canvas.releasePointerCapture(pointerId);
-      }
-    }
-    this.syncPointerDragCursor();
-  }
-
   private findTelekinesisSurface(x: number, z: number): SurfaceArea | null {
     let highestSurface: SurfaceArea | null = null;
     let highestSurfaceY = Number.NEGATIVE_INFINITY;
@@ -14819,14 +13406,11 @@ export class PortfolioGame {
         : null;
     const detachedFromBelt =
       detachedCompass !== null || detachedPencil !== null;
-    if (!detachedFromBelt) {
-      const orbitingPlanet = this.findPointedOrbitingPlanet(event);
-      if (
-        orbitingPlanet &&
-        this.beginOrbitingPlanetTelekinesis(orbitingPlanet, event)
-      ) {
-        return;
-      }
+    if (
+      !detachedFromBelt &&
+      this.archiveOrbitPlayground.beginPointerDrag(event)
+    ) {
+      return;
     }
     if (this.telekinesisPointerId !== null) return;
     const kickable =
@@ -15034,10 +13618,7 @@ export class PortfolioGame {
       }
       return;
     }
-    if (this.orbitTelekinesisHolds.has(event.pointerId)) {
-      this.updateOrbitingPlanetTelekinesis(event);
-      return;
-    }
+    if (this.archiveOrbitPlayground.updatePointerDrag(event)) return;
     if (
       !this.heldKickable ||
       this.telekinesisPointerId !== event.pointerId
@@ -15051,7 +13632,7 @@ export class PortfolioGame {
           this.isPointingAtWornPencil(event) ||
           this.pongChallenge.isPointingAtBall(event) ||
           this.findPointedMathInstanceDrag(event) ||
-          this.findPointedOrbitingPlanet(event) ||
+          this.archiveOrbitPlayground.isPointingAtPlanet(event) ||
           this.findPointedKickable(event) ||
           this.isPointingAtAmbientGrid(event)
             ? "grab"
@@ -15098,7 +13679,7 @@ export class PortfolioGame {
     if (this.pongChallenge.releasePaddleDrag(event)) return;
     if (this.releaseMathInstanceDrag(event)) return;
     if (this.archiveSignalPuzzle.releasePointerDrag(event)) return;
-    if (this.releaseOrbitingPlanetTelekinesis(event)) return;
+    if (this.archiveOrbitPlayground.releasePointerDrag(event)) return;
     if (this.releaseAmbientGridDrag(event)) return;
     if (
       !this.heldKickable ||

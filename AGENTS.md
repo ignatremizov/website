@@ -43,6 +43,7 @@ src/
     ├── proceduralTextures.ts      Runtime-authored texture helpers
     ├── zones/                     Stateful controllers grouped by owning world
     │   ├── archive/
+    │   │   ├── ArchiveOrbitPlayground.ts Planet, atlas, and orbital sandbox lifecycle
     │   │   └── ArchiveSignalPuzzle.ts  Heliograph and observability lifecycle
     │   ├── field/
     │   │   └── VoidTurtleRide.ts  Turtle ride, orbiters, and cargo lifecycle
@@ -97,6 +98,8 @@ Focused modules under `src/game/` own reusable rules, effects, props, and sequen
 `src/game/zones/` contains substantial world-owned controllers. A controller owns its feature state, geometry construction, interactions, animation, transient snapshot, and dynamic-object enumeration together. `PortfolioGame` supplies shared engine services through a narrow host context and decides when zone-level events run. Shared runtime records such as `Kickable` live above zone modules so the composition root never depends on a zone-specific physics type. In particular, `WorldCollapseSequence` owns the common Event Horizon envelope while `PortfolioGame` retains per-zone dispatch; a feature controller may expose its own destruction reaction without replacing that world-specific coordination.
 
 The Field-owned `VoidTurtleRide` keeps the turtle model, ride phases, comet effects, collected-stone session state, and temporary cargo orbits together. It may move the player or borrow portable props only through explicit host callbacks and shared `Kickable` records. `PortfolioGame` still owns movement input, generic telekinesis capture, camera selection, terrain bounds, and the Field Event Horizon branch.
+
+The Archive-owned `ArchiveOrbitPlayground` keeps the orbiting planets, contact projections, multi-pointer telekinesis, player and asteroid ricochets, Thunder gravity lock, orbit restoration, star atlas transformation, and `TO THE MOON` detection together. It receives shared player movement, bounds correction, interactions, batching protection, and `Kickable` records through its host. `PortfolioGame` retains traveling-asteroid routing and Pong leasing because that object crosses world boundaries, and it still dispatches the Archive Event Horizon to the orbit playground, signal puzzle, and data glass.
 
 `src/game/math/` is a hard lazy-loading boundary. `MightymaticaZone.ts` composes the room, and each substantial exhibit belongs in its own module. Exhibits receive shared engine services through `MightymaticaZoneContext`; they must not import `PortfolioGame`, `main.ts`, or shell modules. Do not statically import a math exhibit from code in the eager shell or main game chunk.
 
