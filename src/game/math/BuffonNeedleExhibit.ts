@@ -3,6 +3,7 @@ import { addBox } from "../scenePrimitives";
 import type {
   MathQualityTier,
   MathSpellStage,
+  MathTravelingBody,
   MightymaticaZoneContext,
 } from "./types";
 
@@ -98,6 +99,7 @@ function createSaggingTapeGeometry(length: number): THREE.PlaneGeometry {
 
 export class BuffonNeedleExhibit {
   private readonly context: MightymaticaZoneContext;
+  private readonly getAdditionalTravelingBody: () => MathTravelingBody | null;
   private readonly group = new THREE.Group();
   private readonly mesh: THREE.InstancedMesh;
   private readonly dummy = new THREE.Object3D();
@@ -156,9 +158,14 @@ export class BuffonNeedleExhibit {
   private asteroidInsideExperiment = false;
   private asteroidInterferenceCooldown = 0;
   private asteroidHoldingButton = false;
+  private activeTravelingBody: MathTravelingBody | null = null;
 
-  constructor(context: MightymaticaZoneContext) {
+  constructor(
+    context: MightymaticaZoneContext,
+    getAdditionalTravelingBody: () => MathTravelingBody | null = () => null,
+  ) {
     this.context = context;
+    this.getAdditionalTravelingBody = getAdditionalTravelingBody;
     this.group.name = "buffon-needle-table";
     this.group.position.set(7.25, 0, 6.1);
     context.root.add(this.group);
@@ -668,7 +675,15 @@ export class BuffonNeedleExhibit {
   }
 
   private updateAsteroidInterference(delta: number): boolean {
-    const asteroid = this.context.getTravelingBody();
+    const asteroid =
+      this.getAdditionalTravelingBody() ?? this.context.getTravelingBody();
+    if (asteroid !== this.activeTravelingBody) {
+      this.activeTravelingBody = asteroid;
+      this.asteroidPositionKnown = false;
+      this.asteroidInsideExperiment = false;
+      this.asteroidHoldingButton = false;
+      this.asteroidInterferenceCooldown = 0;
+    }
     if (!asteroid?.enabled) {
       this.asteroidPositionKnown = false;
       this.asteroidInsideExperiment = false;
@@ -692,7 +707,9 @@ export class BuffonNeedleExhibit {
           ? asteroidButtonReleaseRadius
           : asteroidButtonRadius);
     if (restingOnButton && !this.asteroidHoldingButton) {
-      this.startOrAccelerate("asteroid");
+      this.startOrAccelerate(
+        asteroid.kind === "wisdom-orb" ? "wisdom-orb" : "asteroid",
+      );
     }
     this.asteroidHoldingButton = restingOnButton;
 
@@ -767,7 +784,9 @@ export class BuffonNeedleExhibit {
     if (firstBreach) {
       this.disturbanceEvents = 1;
       this.context.onStatus(
-        "The wrong-address stone enters the sample. Needles scatter from its path, and the live estimate marks the run INVALID.",
+        asteroid.kind === "wisdom-orb"
+          ? "The displaced wisdom orb rolls through the sample. Needles scatter from its path, and the live estimate marks the run INVALID."
+          : "The wrong-address stone enters the sample. Needles scatter from its path, and the live estimate marks the run INVALID.",
       );
     } else {
       this.disturbanceEvents += 1;
@@ -1074,7 +1093,7 @@ export class BuffonNeedleExhibit {
   }
 
   private startOrAccelerate(
-    source: "direct" | "asteroid" = "direct",
+    source: "direct" | "asteroid" | "wisdom-orb" = "direct",
   ): void {
     this.buttonPressAge = 0;
     this.setTapeDeployed(true);
@@ -1088,8 +1107,10 @@ export class BuffonNeedleExhibit {
     if (this.rainActive) {
       this.accelerationBoost = Math.min(9, this.accelerationBoost + 2.5);
       this.context.onStatus(
-        source === "asteroid"
-          ? "The wrong-address stone bears down on the red switch. The feed answers its weight with a faster rain."
+        source !== "direct"
+          ? source === "wisdom-orb"
+            ? "The wisdom orb bears down on the red switch. The feed answers its weight with a faster rain."
+            : "The wrong-address stone bears down on the red switch. The feed answers its weight with a faster rain."
           : "The red button sinks again. The feed accelerates while every new drop remains visible.",
       );
       return;
@@ -1103,8 +1124,10 @@ export class BuffonNeedleExhibit {
         `Press again to increase feed · ${this.settled}/${this.cap}`,
       );
       this.context.onStatus(
-        source === "asteroid"
-          ? `The wrong-address stone settles on the switch. The post yields beneath it, releasing a ${this.cap}-needle rain.`
+        source !== "direct"
+          ? source === "wisdom-orb"
+            ? `The wisdom orb settles on the switch. The post yields beneath it, releasing a ${this.cap}-needle rain.`
+            : `The wrong-address stone settles on the switch. The post yields beneath it, releasing a ${this.cap}-needle rain.`
           : this.context.reducedMotion
           ? `Needles begin arriving in a progressive ${this.cap}-drop sample. Reduced motion settles each new needle without a fall.`
           : `The remote post releases a slow rain toward a ${this.cap}-needle sample. Striped tape snaps upward around the table.`,

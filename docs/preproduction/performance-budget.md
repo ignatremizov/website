@@ -196,6 +196,26 @@
   records have zero-scale matrices. The source instance flickers and contracts in
   place, then uses one scalar scale-in when reset—no textures, per-solid meshes,
   post-processing pass, or runtime object allocation.
+- Render the Mind Reader's 100 physical chart marks through one alpha-atlas-backed
+  instanced mesh and one invisible cell-shaped picking batch. Keep mark physics as
+  scalar records and update instance buffers only while a mark is held, thrown,
+  dissolving, rematerializing, or participating in a spell wave. Escaped marks reuse
+  one preallocated 72-instance glitch batch, limited to 24/48/72 active slots on
+  low/medium/high; a round change or Surge/Thunder wave returns existing records to
+  their authored cells without creating meshes, textures, or rigid bodies.
+- Compose the Mind Reader's per-symbol wisdom spectacles through one fixed theatre:
+  a 128-instance mote pool, 44-instance token-atlas pool, 18-instance ring pool,
+  20-instance phantom pool, one 440-segment dynamic line buffer, one deforming mercury
+  sheet, one bounded radiance light/core, one reusable cross outline, and reusable
+  cat/dragon apparitions. Quality limits active records to
+  42/78/128 motes, 14/26/44 tokens, 7/12/18 rings, 9/14/20 phantoms, and
+  170/320/440 line segments on low/medium/high. Reduced motion halves active motes and
+  glyphs, suppresses environmental player drift, and advances autonomous flourishes
+  on a subdued local clock. Bastet may displace the existing orb into the host's
+  lightweight kickable pool. The rolling sphere exposes one dynamic top-only landing
+  surface and no blocking side collider, while the answer billboard remains upright.
+  It also reuses the needle experiment's existing traveling-body interference path
+  rather than adding a second per-frame needle scan.
 - Keep Archive space-pinball physics to the quality-visible orbit records and at most
   ten planet-pair checks on high quality (six on medium, one on low). Reuse one world
   vector per record, update scalar spring/impact state in place, and cap active space
@@ -277,13 +297,13 @@ level-6 gzip; runtime draw-call observations remain manual.
 Measured on the vertical slice:
 
 <!-- build-metrics:start -->
-- Shell JavaScript: 53.78 kB minified / 18.10 kB gzip.
-- Shell CSS: 80.83 kB minified / 18.26 kB gzip.
+- Shell JavaScript: 54.55 kB minified / 18.20 kB gzip.
+- Shell CSS: 80.85 kB minified / 18.28 kB gzip.
 - In-page hero: 252.69 kB WebP (the 528.42 kB JPEG remains social metadata only).
-- Lazy game code: 574.12 kB minified / 165.11 kB gzip.
-- Nested Mightymatica code: 87.66 kB minified / 26.80 kB gzip.
-- Lazy Three.js: 589.00 kB minified / 148.09 kB gzip.
-- First-playable JavaScript after the shell: about 313 kB gzip.
+- Lazy game code: 577.35 kB minified / 166.01 kB gzip.
+- Nested Mightymatica code: 182.51 kB minified / 54.70 kB gzip.
+- Lazy Three.js: 591.73 kB minified / 148.86 kB gzip.
+- First-playable JavaScript after the shell: about 315 kB gzip.
 <!-- build-metrics:end -->
 - General-purpose WASM physics payload: zero; top-down collision is local game code.
 - Verified scenes: 43–72 calls across exploration positions, below the 75-call

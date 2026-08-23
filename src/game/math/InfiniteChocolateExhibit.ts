@@ -429,7 +429,6 @@ export class InfiniteChocolateExhibit {
     this.group.add(this.dragProxy);
     context.registerInstanceDrag({
       object: this.dragProxy,
-      maximumDistance: 10,
       getWorldPosition: (instanceId, target) => {
         const piece = this.pieces[instanceId];
         if (!piece) return target.set(0, -100, 0);
@@ -852,6 +851,11 @@ export class InfiniteChocolateExhibit {
     };
     playerSurface.contains = (x, z, margin) =>
       this.pieceSupportsWorldPoint(piece, x, z, margin);
+    // Intentionally keep this collider active while the slab is held. Dragging
+    // chocolate through the avatar lets penetration correction transfer the
+    // slab's speed into the player ("chocolate boosting"), an emergent movement
+    // technique reserved for a later traversal puzzle. Do not "fix" it by
+    // disabling held-piece collision or clamping away the resulting push.
     this.context.registerDynamicBox(playerCollider);
     this.context.registerDynamicJumpSurface(playerSurface);
     this.pieces.push(piece);

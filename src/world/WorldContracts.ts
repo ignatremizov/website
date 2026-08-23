@@ -96,7 +96,7 @@ export interface WorldStatusOptions {
   kind?: "notice" | "speech" | "achievement";
   speaker?: string;
   title?: string;
-  toastPolicy?: "replace" | "after-achievement";
+  toastPolicy?: "replace" | "after-achievement" | "alongside-achievement";
   /** Protected narration admitted while the destructive finale owns the HUD. */
   channel?: "world" | "event-horizon";
 }

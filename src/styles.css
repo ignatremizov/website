@@ -1550,6 +1550,7 @@ svg {
   font-family: var(--serif);
   font-size: clamp(0.94rem, 1.18vw, 1.08rem);
   line-height: 1.45;
+  white-space: pre-line;
 }
 
 .world-toast[data-kind="speech"] {

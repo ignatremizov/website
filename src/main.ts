@@ -81,6 +81,7 @@ const compassHeading = byId<HTMLElement>("compass-heading");
 const interactionPrompt = byId<HTMLElement>("interaction-prompt");
 const interactionLabel = byId<HTMLElement>("interaction-label");
 const worldToast = byId<HTMLElement>("world-toast");
+const worldDialogue = byId<HTMLElement>("world-dialogue");
 const turtleMediaPlayer = byId<HTMLElement>("turtle-media-player");
 const voidRideAtmosphere = byId<HTMLElement>("void-ride-atmosphere");
 const voidRideTelemetry = byId<HTMLElement>("void-ride-telemetry");
@@ -428,6 +429,8 @@ let spellPointerId: number | null = null;
 let fieldMenuPulseTimer = 0;
 let toastTimer = 0;
 let toastHideTimer = 0;
+let dialogueTimer = 0;
+let dialogueHideTimer = 0;
 let activeToastKind: WorldJournalKind | null = null;
 let deferredWorldToast: DeferredWorldToast | null = null;
 let turtleMediaHideTimer = 0;
@@ -869,6 +872,15 @@ function showWorldToast(
 ): void {
   const kind = options.kind ?? "notice";
   if (
+    kind === "speech" &&
+    options.toastPolicy === "alongside-achievement" &&
+    activeToastKind === "achievement" &&
+    !worldToast.hidden
+  ) {
+    showParallelWorldDialogue(message, options);
+    return;
+  }
+  if (
     options.toastPolicy === "after-achievement" &&
     activeToastKind === "achievement" &&
     !worldToast.hidden
@@ -921,6 +933,38 @@ function showWorldToast(
       const deferred = deferredWorldToast;
       deferredWorldToast = null;
       if (deferred) showWorldToast(deferred.message, deferred.options);
+    }, 260);
+  }, visibleDuration);
+}
+
+function showParallelWorldDialogue(
+  message: string,
+  options: WorldStatusOptions,
+): void {
+  window.clearTimeout(dialogueTimer);
+  window.clearTimeout(dialogueHideTimer);
+  const speaker = document.createElement("span");
+  speaker.className = "world-toast-speaker";
+  speaker.textContent = options.speaker ?? "Unknown signal";
+  const quote = document.createElement("q");
+  quote.className = "world-toast-quote";
+  quote.textContent = message;
+  worldDialogue.dataset.kind = "speech";
+  worldDialogue.replaceChildren(speaker, quote);
+  worldDialogue.hidden = false;
+  worldDialogue.setAttribute("aria-hidden", "false");
+  window.requestAnimationFrame(() => {
+    worldDialogue.classList.add("is-visible");
+  });
+  const visibleDuration = Math.max(
+    12000,
+    Math.min(26000, 5000 + message.length * 78),
+  );
+  dialogueTimer = window.setTimeout(() => {
+    worldDialogue.classList.remove("is-visible");
+    dialogueHideTimer = window.setTimeout(() => {
+      worldDialogue.hidden = true;
+      worldDialogue.setAttribute("aria-hidden", "true");
     }, 260);
   }, visibleDuration);
 }

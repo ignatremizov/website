@@ -175,12 +175,18 @@ interface PointerAction {
   object: THREE.Object3D;
   action: () => void | Promise<void>;
   maximumDistance: number;
+  isAvailable?: () => boolean;
 }
 
 interface MathInstanceDragHit {
   spec: MathInstanceDragSpec;
   instanceId: number;
   point: THREE.Vector3;
+  distance: number;
+}
+
+interface KickablePointerHit {
+  kickable: Kickable;
   distance: number;
 }
 
@@ -247,6 +253,13 @@ interface StaticCollider {
   solidTop?: number;
   /** False keeps a movement collider transparent to Archive optical rays. */
   blocksRay?: boolean;
+}
+
+interface MathCameraFrame {
+  focus: THREE.Vector3;
+  zoom: number;
+  startedAt: number;
+  expiresAt: number;
 }
 
 interface FieldRockClusterPart {
@@ -735,6 +748,7 @@ export class PortfolioGame {
   private readonly cameraTargetFocus = new THREE.Vector3();
   private readonly cameraForward = new THREE.Vector3();
   private readonly cameraRight = new THREE.Vector3();
+  private mathCameraFrame: MathCameraFrame | null = null;
   private readonly movement = new THREE.Vector3();
   private readonly desiredPosition = new THREE.Vector3();
   private readonly resizeObserver: ResizeObserver;
@@ -787,6 +801,7 @@ export class PortfolioGame {
     restingY: 0,
     enabled: false,
     held: false,
+    kind: "asteroid" as const,
   };
   private readonly tempBounds = new THREE.Box3();
   private readonly pointer = new THREE.Vector2();
@@ -984,6 +999,7 @@ export class PortfolioGame {
   private telekinesisPlacementSurface: SurfaceArea | null = null;
   private telekinesisPointerId: number | null = null;
   private telekinesisPreviousTime = 0;
+  private telekinesisPlacementSettledFor = 0;
   private telekinesisStartClientX = 0;
   private telekinesisStartClientY = 0;
   private telekinesisPointerClientX = 0;
@@ -2992,6 +3008,7 @@ export class PortfolioGame {
             this.archiveOrbitPlayground.hasActiveMotion() ||
             this.archiveSignalPuzzle.hasActiveMotion() ||
             this.fallsRuneRitual.hasActiveMotion() ||
+            this.mathCameraFrame !== null ||
             this.serverFlickerAge < this.serverFlickerDuration ||
             this.worldCollapse !== null ||
             (this.legacySimulationCube?.rematerialization?.isActive ?? false) ||
@@ -5260,6 +5277,17 @@ export class PortfolioGame {
     this.cameraTargetFocus.set(position.x, 0.72, position.z);
     this.cameraTargetOffset.copy(this.explorationCameraOffset);
     let targetZoom = 1;
+    let mathCameraFrame = this.mathCameraFrame;
+    if (
+      mathCameraFrame &&
+      (this.currentZone !== "math" ||
+        this.elapsed >= mathCameraFrame.expiresAt ||
+        (this.elapsed >= mathCameraFrame.startedAt + 0.35 &&
+          (this.movement.lengthSq() > 0.0001 || this.jumpHeight > 0.02)))
+    ) {
+      this.mathCameraFrame = null;
+      mathCameraFrame = null;
+    }
 
     if (this.worldCollapse && this.worldCollapseFrame) {
       const collapse = this.worldCollapseFrame;
@@ -5303,6 +5331,10 @@ export class PortfolioGame {
         0.74 + collapse.pull * 0.12,
         framing,
       );
+    } else if (mathCameraFrame) {
+      this.cameraTargetFocus.copy(mathCameraFrame.focus);
+      this.cameraTargetOffset.copy(this.explorationCameraOffset);
+      targetZoom = mathCameraFrame.zoom;
     } else if (this.voidTurtleRide.isRiding()) {
       this.cameraTargetFocus.y = 1.05;
       this.cameraTargetOffset.set(10.2, 17.2, 10.2);
@@ -6967,6 +6999,7 @@ export class PortfolioGame {
 
       let nextX = kickable.object.position.x + kickable.velocity.x * delta;
       let nextZ = kickable.object.position.z + kickable.velocity.z * delta;
+      let sphericalSupport: SurfaceArea | null = null;
       if (kickable.pinballRadius) {
         const ritualImpact =
           this.currentZone === "falls" &&
@@ -7010,6 +7043,30 @@ export class PortfolioGame {
           nextX = nx * limit;
           nextZ = nz * limit;
         }
+        if (
+          kickable.gravity &&
+          kickable.object.userData.sphericalLooseBody === true
+        ) {
+          let highestSupport = Number.NEGATIVE_INFINITY;
+          for (const surface of this.surfaceAreas) {
+            if (
+              surface.id === "math-mind-reader-loose-orb-top" ||
+              !this.surfaceContainsPoint(surface, nextX, nextZ)
+            ) {
+              continue;
+            }
+            const height = surface.heightAt(nextX, nextZ);
+            if (
+              height <= kickable.object.position.y + kickable.radius + 0.18 &&
+              height > highestSupport
+            ) {
+              highestSupport = height;
+              sphericalSupport = surface;
+            }
+          }
+          kickable.object.userData.sphericalFloorY =
+            sphericalSupport?.heightAt(nextX, nextZ) ?? 0.155;
+        }
       }
 
       if (
@@ -7026,6 +7083,15 @@ export class PortfolioGame {
 
       kickable.object.position.x = nextX;
       kickable.object.position.z = nextZ;
+      if (
+        kickable.onPlatform &&
+        kickable.platform &&
+        kickable.object.userData.sphericalLooseBody === true &&
+        kickable.velocity.y > 0.05
+      ) {
+        kickable.onPlatform = false;
+        kickable.platform = null;
+      }
       if (kickable.onPlatform && kickable.platform) {
         const remainsOnPlatform = this.surfaceContainsPoint(
           kickable.platform,
@@ -7054,13 +7120,66 @@ export class PortfolioGame {
       }
 
       if (kickable.gravity && !kickable.onPlatform) {
-        kickable.object.updateWorldMatrix(true, true);
-        this.tempBounds.setFromObject(kickable.object);
-        const penetration = kickable.restingY - this.tempBounds.min.y;
+        const sphericalLooseBody =
+          kickable.object.userData.sphericalLooseBody === true;
+        if (sphericalLooseBody && !sphericalSupport) {
+          let highestSupport = Number.NEGATIVE_INFINITY;
+          for (const surface of this.surfaceAreas) {
+            if (
+              surface.id === "math-mind-reader-loose-orb-top" ||
+              !this.surfaceContainsPoint(
+                surface,
+                kickable.object.position.x,
+                kickable.object.position.z,
+              )
+            ) {
+              continue;
+            }
+            const height = surface.heightAt(
+              kickable.object.position.x,
+              kickable.object.position.z,
+            );
+            if (
+              height <=
+                kickable.object.position.y +
+                  kickable.radius +
+                  0.18 &&
+              height > highestSupport
+            ) {
+              highestSupport = height;
+              sphericalSupport = surface;
+            }
+          }
+          kickable.object.userData.sphericalFloorY =
+            sphericalSupport?.heightAt(
+              kickable.object.position.x,
+              kickable.object.position.z,
+            ) ?? 0.155;
+        }
+        const objectBottom =
+          sphericalLooseBody
+            ? kickable.object.position.y - kickable.radius
+            : (() => {
+                kickable.object.updateWorldMatrix(true, true);
+                this.tempBounds.setFromObject(kickable.object);
+                return this.tempBounds.min.y;
+              })();
+        const floorY = sphericalLooseBody
+          ? Number(kickable.object.userData.sphericalFloorY ?? 0)
+          : kickable.restingY;
+        const penetration = floorY - objectBottom;
         if (penetration >= 0) {
           kickable.object.position.y += penetration;
           kickable.velocity.y =
             Math.abs(kickable.velocity.y) > 1.2 ? -kickable.velocity.y * 0.24 : 0;
+          if (
+            sphericalSupport &&
+            Math.abs(kickable.velocity.y) < 0.05
+          ) {
+            kickable.platform = sphericalSupport;
+            kickable.platformOffset = kickable.radius;
+            kickable.onPlatform = true;
+          }
         }
       }
       if (
@@ -8288,13 +8407,86 @@ export class PortfolioGame {
         object,
         action,
         maximumDistance = 2.4,
+        isAvailable,
       ) => {
-        this.pointerActions.push({ object, action, maximumDistance });
+        this.pointerActions.push({
+          object,
+          action,
+          maximumDistance,
+          isAvailable,
+        });
       },
       registerInstanceDrag: (spec) => {
         this.mathInstanceDrags.push(spec);
       },
+      registerLooseBody: (spec) => {
+        const kickable = this.registerKickable(
+          spec.object,
+          spec.radius,
+          spec.restingY,
+          null,
+          spec.gravity,
+          spec.boundaryRadius,
+          spec.friction,
+          spec.message,
+        );
+        kickable.enabled = spec.enabled ?? true;
+        // A free spherical body has no authored starting platform from which
+        // registerKickable could derive this offset. Preserve its radius so
+        // telekinetic placement seats the sphere on top of a selected surface
+        // instead of putting its centre inside that surface.
+        if (spec.object.userData.sphericalLooseBody === true) {
+          kickable.platformOffset = spec.radius;
+        }
+        let disposed = false;
+        const game = this;
+        return {
+          velocity: kickable.velocity,
+          get enabled() {
+            return kickable.enabled;
+          },
+          set enabled(enabled: boolean) {
+            kickable.enabled = enabled;
+          },
+          get radius() {
+            return kickable.radius;
+          },
+          set radius(radius: number) {
+            kickable.radius = radius;
+          },
+          get restingY() {
+            return kickable.restingY;
+          },
+          set restingY(restingY: number) {
+            kickable.restingY = restingY;
+          },
+          get held() {
+            return game.heldKickable === kickable;
+          },
+          dispose: () => {
+            if (disposed) return;
+            disposed = true;
+            kickable.enabled = false;
+            const index = this.kickables.indexOf(kickable);
+            if (index >= 0) this.kickables.splice(index, 1);
+          },
+        };
+      },
       copyPlayerPosition: (target) => target.copy(this.playerPosition),
+      applyPlayerDrift: (x, z) => {
+        this.tempDirection.copy(this.playerPosition);
+        this.tempDirection.x += x;
+        this.tempDirection.z += z;
+        this.constrainToBounds(this.tempDirection);
+        if (this.noclip) {
+          this.playerPosition.copy(this.tempDirection);
+          return;
+        }
+        this.moveWithCollisions(
+          this.tempDirection,
+          this.surfaceOffset + this.jumpHeight,
+        );
+      },
       getPlayerFeetHeight: () => this.surfaceOffset + this.jumpHeight,
       getTravelingBody: () => {
         const asteroid = this.archiveAsteroid;
@@ -8312,6 +8504,25 @@ export class PortfolioGame {
       },
       registerPlayerOccluder: (object) => {
         this.registerPlayerOccluder(object);
+      },
+      performReachGesture: (target, shouldJump = false) => {
+        this.pointerActionReachTarget = target;
+        this.pointerActionReachUntil = this.elapsed + 0.82;
+        if (shouldJump) this.jump();
+      },
+      requestCameraFrame: ({ focus, zoom, duration }) => {
+        const frame: MathCameraFrame = {
+          focus: new THREE.Vector3(focus.x, focus.y, focus.z),
+          zoom: THREE.MathUtils.clamp(zoom, 0.65, 2.5),
+          startedAt: this.elapsed,
+          expiresAt: this.elapsed + Math.max(0.25, duration),
+        };
+        this.mathCameraFrame = frame;
+        return () => {
+          if (this.mathCameraFrame === frame) {
+            this.mathCameraFrame = null;
+          }
+        };
       },
       registerReturnAperture: (x, z, core, label) => {
         const action = () => this.teleport("grid", true);
@@ -11178,6 +11389,7 @@ export class PortfolioGame {
     const pointerId = this.telekinesisPointerId;
     this.heldKickable = null;
     this.telekinesisPlacementSurface = null;
+    this.telekinesisPlacementSettledFor = 0;
     this.telekinesisPointerId = null;
     this.telekinesisMoved = false;
     this.telekinesisPencilWasWorn = false;
@@ -12245,6 +12457,7 @@ export class PortfolioGame {
     for (const instanceDrag of this.mathInstanceDrags) {
       protect(instanceDrag.object);
     }
+    this.mightymaticaZone?.forEachDynamicObject(protect);
     protect(this.splashRing);
     protect(this.splashBurst?.drops ?? null);
     protect(this.runeAltar?.object ?? null);
@@ -13058,12 +13271,6 @@ export class PortfolioGame {
           ) {
             continue;
           }
-          spec.getWorldPosition(hit.instanceId, this.tempWorld);
-          const playerDistance = Math.hypot(
-            this.tempWorld.x - this.playerPosition.x,
-            this.tempWorld.z - this.playerPosition.z,
-          );
-          if (playerDistance > (spec.maximumDistance ?? 8.5)) continue;
           closest = {
             spec,
             instanceId: hit.instanceId,
@@ -13087,6 +13294,8 @@ export class PortfolioGame {
     }
     const hit = this.findPointedMathInstanceDrag(event);
     if (!hit) return false;
+    const kickableHit = this.findPointedKickableHit(event);
+    if (kickableHit && kickableHit.distance < hit.distance) return false;
 
     const currentWorldPosition = hit.spec.getWorldPosition(
       hit.instanceId,
@@ -13201,7 +13410,12 @@ export class PortfolioGame {
     let closest: PointerAction | null = null;
     let closestDistance = Number.POSITIVE_INFINITY;
     for (const pointerAction of this.pointerActions) {
-      if (!pointerAction.object.visible) continue;
+      if (
+        !pointerAction.object.visible ||
+        pointerAction.isAvailable?.() === false
+      ) {
+        continue;
+      }
       pointerAction.object.getWorldPosition(this.tempWorld);
       const playerDistance = Math.hypot(
         this.tempWorld.x - this.playerPosition.x,
@@ -13237,8 +13451,16 @@ export class PortfolioGame {
   }
 
   private findPointedKickable(event: PointerEvent): Kickable | null {
+    return this.findPointedKickableHit(event)?.kickable ?? null;
+  }
+
+  private findPointedKickableHit(
+    event: PointerEvent,
+  ): KickablePointerHit | null {
     if (this.kickables.length === 0) return null;
     this.updatePointerRay(event);
+    // Telekinesis is screen-space magic: any visible loose prop may be
+    // selected regardless of the player's physical distance from it.
     const hits = this.pointerRaycaster.intersectObjects(
       this.kickables
         .filter((kickable) => kickable.enabled)
@@ -13252,7 +13474,9 @@ export class PortfolioGame {
           (hit.object === candidate.object ||
             candidate.object.getObjectById(hit.object.id) !== undefined),
       );
-      if (kickable) return kickable;
+      if (kickable) {
+        return { kickable, distance: hit.distance };
+      }
     }
     return null;
   }
@@ -13451,6 +13675,7 @@ export class PortfolioGame {
     this.fallsRuneRitual.unseatKickable(kickable);
     this.heldKickable = kickable;
     this.telekinesisMoved = false;
+    this.telekinesisPlacementSettledFor = 0;
     this.telekinesisPencilWasWorn = detachedPencil !== null;
     this.telekinesisStartClientX = event.clientX;
     this.telekinesisStartClientY = event.clientY;
@@ -13555,6 +13780,7 @@ export class PortfolioGame {
 
     kickable.object.position.x = this.tempDirection.x;
     kickable.object.position.z = this.tempDirection.z;
+    const previousPlacementSurface = this.telekinesisPlacementSurface;
     this.telekinesisPlacementSurface = turtleBound
       ? null
       : this.findTelekinesisSurface(
@@ -13581,6 +13807,18 @@ export class PortfolioGame {
       kickable.object.position.x - previousObjectX,
       kickable.object.position.z - previousObjectZ,
     ) / Math.max(1 / 120, deltaTime);
+    if (
+      this.telekinesisPlacementSurface &&
+      this.telekinesisPlacementSurface === previousPlacementSurface &&
+      actualSpeed < 0.72
+    ) {
+      this.telekinesisPlacementSettledFor = Math.min(
+        1,
+        this.telekinesisPlacementSettledFor + deltaTime,
+      );
+    } else {
+      this.telekinesisPlacementSettledFor = 0;
+    }
     if (actualSpeed > 0.18) {
       this.traceAmbientGridWithPencil(
         kickable,
@@ -13753,7 +13991,9 @@ export class PortfolioGame {
       return;
     }
     const placementCandidate =
-      planarSpeed < 3.6
+      planarSpeed < 2.2 &&
+      (!this.telekinesisMoved ||
+        this.telekinesisPlacementSettledFor >= 0.14)
         ? this.telekinesisPlacementSurface
         : null;
     const placedSurface =
@@ -13814,6 +14054,7 @@ export class PortfolioGame {
     kickable.kickCooldown = 0.28;
     this.heldKickable = null;
     this.telekinesisPlacementSurface = null;
+    this.telekinesisPlacementSettledFor = 0;
     this.telekinesisPointerId = null;
     this.telekinesisMoved = false;
     this.telekinesisPencilWasWorn = false;

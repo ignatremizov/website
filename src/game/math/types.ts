@@ -20,7 +20,6 @@ export interface MathInteractionSpec {
 
 export interface MathInstanceDragSpec {
   object: THREE.InstancedMesh;
-  maximumDistance?: number;
   getWorldPosition: (
     instanceId: number,
     target: THREE.Vector3,
@@ -71,6 +70,38 @@ export interface MathTravelingBody {
   restingY: number;
   enabled: boolean;
   held: boolean;
+  kind?: "asteroid" | "wisdom-orb";
+}
+
+export interface MathLooseBodySpec {
+  object: THREE.Object3D;
+  radius: number;
+  restingY: number;
+  gravity: boolean;
+  boundaryRadius: number | null;
+  friction: number;
+  message: string;
+  enabled?: boolean;
+}
+
+/**
+ * Narrow handle over the host's shared kickable physics. Math exhibits can
+ * launch and observe a loose prop without importing PortfolioGame or its
+ * world-owned Kickable record across the lazy-loading boundary.
+ */
+export interface MathLooseBodyHandle {
+  readonly velocity: THREE.Vector3;
+  enabled: boolean;
+  radius: number;
+  restingY: number;
+  readonly held: boolean;
+  dispose: () => void;
+}
+
+export interface MathCameraFrameSpec {
+  focus: Readonly<THREE.Vector3>;
+  zoom: number;
+  duration: number;
 }
 
 export interface MightymaticaZoneContext {
@@ -118,12 +149,22 @@ export interface MightymaticaZoneContext {
     object: THREE.Object3D,
     action: () => void | Promise<void>,
     maximumDistance?: number,
+    isAvailable?: () => boolean,
   ) => void;
   registerInstanceDrag: (spec: MathInstanceDragSpec) => void;
+  registerLooseBody: (spec: MathLooseBodySpec) => MathLooseBodyHandle;
   copyPlayerPosition: (target: THREE.Vector3) => THREE.Vector3;
+  /**
+   * Applies a small world-space displacement through the host's normal bounds
+   * and collision resolution. Reserved for exhibit-authored environmental
+   * forces rather than ordinary player locomotion.
+   */
+  applyPlayerDrift: (x: number, z: number) => void;
   getPlayerFeetHeight: () => number;
   getTravelingBody: () => MathTravelingBody | null;
   registerPlayerOccluder: (object: THREE.Object3D) => void;
+  performReachGesture: (target: THREE.Object3D, jump?: boolean) => void;
+  requestCameraFrame: (spec: MathCameraFrameSpec) => () => void;
   registerReturnAperture: (
     x: number,
     z: number,
@@ -138,5 +179,6 @@ export interface MightymaticaZoneRuntime {
   setQuality: (quality: MathQualityTier) => void;
   reactToSpell: (stage: MathSpellStage, charge: number) => void;
   hasActiveMotion: () => boolean;
+  forEachDynamicObject: (visitor: (object: THREE.Object3D) => void) => void;
   dispose: () => void;
 }

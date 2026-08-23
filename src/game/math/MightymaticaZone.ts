@@ -236,8 +236,14 @@ class MightymaticaZone implements MightymaticaZoneRuntime {
     this.addAttribution();
 
     this.mindReader = new MindReaderExhibit(context);
-    this.fallingSolids = new FallingSolidsGarden(context);
-    this.buffon = new BuffonNeedleExhibit(context);
+    this.fallingSolids = new FallingSolidsGarden(
+      context,
+      () => this.mindReader.getTravelingOrb(),
+    );
+    this.buffon = new BuffonNeedleExhibit(
+      context,
+      () => this.mindReader.getTravelingOrb(),
+    );
     this.chocolate = new InfiniteChocolateExhibit(context);
     this.addPanel(
       "CHOCOLATE OUT OF NOTHING",
@@ -274,6 +280,7 @@ class MightymaticaZone implements MightymaticaZoneRuntime {
   }
 
   setQuality(quality: MathQualityTier): void {
+    this.mindReader.setQuality(quality);
     this.fallingSolids.setQuality(quality);
     this.buffon.setQuality(quality);
   }
@@ -286,6 +293,7 @@ class MightymaticaZone implements MightymaticaZoneRuntime {
     }
     const scatteredChocolate = this.chocolate.applySpellImpulse(stage, charge);
     const launchedNeedles = this.buffon.reactToSpell(stage, charge);
+    const liftedSymbols = this.mindReader.reactToSpell(stage, charge);
     const intensity =
       stage === "thunder" ? "A thunder proof" : stage === "surge" ? "A violet theorem" : "A binary conjecture";
     const solidsReaction =
@@ -304,6 +312,10 @@ class MightymaticaZone implements MightymaticaZoneRuntime {
           ? ` while ${launchedNeedles} needles rise in staggered waves`
           : ""
       }${
+        liftedSymbols > 0
+          ? "; the chart’s marks rise in a travelling proof"
+          : ""
+      }${
         charge > 0.8 ? " with unusual confidence" : ""
       }.`,
     );
@@ -311,12 +323,17 @@ class MightymaticaZone implements MightymaticaZoneRuntime {
 
   hasActiveMotion(): boolean {
     return (
+      this.mindReader.hasActiveMotion() ||
       this.fallingSolids.hasActiveMotion() ||
       this.buffon.hasActiveMotion() ||
       this.chocolate.hasActiveMotion() ||
       this.sierpinskiCorner.hasActiveMotion() ||
       this.returnAperture.hasActiveMotion()
     );
+  }
+
+  forEachDynamicObject(visitor: (object: THREE.Object3D) => void): void {
+    this.mindReader.forEachDynamicObject(visitor);
   }
 
   dispose(): void {

@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import type {
   MathQualityTier,
+  MathTravelingBody,
   MightymaticaZoneContext,
 } from "./types";
 
@@ -58,6 +59,7 @@ const waveRelocationBaseDuration = 0.86;
 
 export class FallingSolidsGarden {
   private readonly context: MightymaticaZoneContext;
+  private readonly getTravelingOrb: () => MathTravelingBody | null;
   private readonly group = new THREE.Group();
   private readonly meshes: THREE.InstancedMesh[] = [];
   private readonly outlineMeshes: THREE.InstancedMesh[] = [];
@@ -70,14 +72,21 @@ export class FallingSolidsGarden {
   private readonly glitchFragments: GlitchFragment[] = [];
   private readonly dummy = new THREE.Object3D();
   private readonly dragLocalPoint = new THREE.Vector3();
+  private readonly orbLocalPoint = new THREE.Vector3();
+  private readonly orbPreviousLocalPoint = new THREE.Vector3();
   private readonly glitchColor = new THREE.Color();
   private activePerType = 5;
   private activeGlitchFragments = 0;
   private glitchCursor = 0;
   private wave = 0;
+  private orbSweepReady = false;
 
-  constructor(context: MightymaticaZoneContext) {
+  constructor(
+    context: MightymaticaZoneContext,
+    getTravelingOrb: () => MathTravelingBody | null,
+  ) {
     this.context = context;
+    this.getTravelingOrb = getTravelingOrb;
     this.group.name = "falling-solids-garden";
     this.group.position.set(8.2, 0, -4.6);
     context.root.add(this.group);
@@ -237,7 +246,6 @@ export class FallingSolidsGarden {
 
       context.registerInstanceDrag({
         object: pickMesh,
-        maximumDistance: 11,
         getWorldPosition: (instanceId, target) => {
           const solid = this.getSolid(type, instanceId);
           if (!solid) return target.set(0, -100, 0);
@@ -332,6 +340,21 @@ export class FallingSolidsGarden {
   }
 
   update(delta: number, elapsed: number): void {
+    const travelingOrb = this.getTravelingOrb();
+    const orbEnabled = travelingOrb?.enabled === true;
+    const orbBucketIndex =
+      orbEnabled && travelingOrb
+        ? this.getOrbBucketIndex(travelingOrb)
+        : -1;
+    const orbCollisionActive =
+      orbEnabled &&
+      (travelingOrb?.held === true || orbBucketIndex >= 0);
+    if (!orbEnabled) {
+      this.orbSweepReady = false;
+    } else if (!this.orbSweepReady) {
+      this.orbPreviousLocalPoint.copy(this.orbLocalPoint);
+      this.orbSweepReady = true;
+    }
     for (const solid of this.solids) {
       if (solid.slot >= this.activePerType) continue;
       solid.rematerializeAge = Math.min(
@@ -385,6 +408,13 @@ export class FallingSolidsGarden {
         }
         continue;
       }
+      if (
+        orbCollisionActive &&
+        travelingOrb &&
+        this.resolveOrbCollision(solid, travelingOrb)
+      ) {
+        continue;
+      }
       if (this.context.reducedMotion) continue;
       const targetX = -4.2 + solid.color * 2.1;
       solid.position.y -= solid.speed * delta;
@@ -404,6 +434,9 @@ export class FallingSolidsGarden {
       solid.rotation.y += delta * (0.62 + solid.slot * 0.025);
       solid.rotation.z += delta * 0.28;
       if (solid.position.y < 1.05) this.resetSolid(solid, false);
+    }
+    if (orbEnabled) {
+      this.orbPreviousLocalPoint.copy(this.orbLocalPoint);
     }
     this.updateMatrices();
     this.updateGlitchFragments(delta, elapsed);
@@ -617,6 +650,84 @@ export class FallingSolidsGarden {
       Math.abs(position.x) > escapeHalfWidth ||
       Math.abs(position.z) > escapeHalfDepth
     );
+  }
+
+  private getOrbBucketIndex(orb: MathTravelingBody): number {
+    this.orbLocalPoint.copy(orb.position);
+    this.group.worldToLocal(this.orbLocalPoint);
+    const bucketIndex = Math.round((this.orbLocalPoint.x + 4.2) / 2.1);
+    if (bucketIndex < 0 || bucketIndex >= bucketColors.length) return -1;
+    const bucketX = -4.2 + bucketIndex * 2.1;
+    return Math.abs(this.orbLocalPoint.x - bucketX) <= 0.78 &&
+      Math.abs(this.orbLocalPoint.z - 2.85) <= 0.78 &&
+      this.orbLocalPoint.y >= 0.32 &&
+      this.orbLocalPoint.y <= 1.78
+      ? bucketIndex
+      : -1;
+  }
+
+  private resolveOrbCollision(
+    solid: FallingSolid,
+    orb: MathTravelingBody,
+  ): boolean {
+    const solidRadius = solid.scale * 0.46;
+    let contactX = this.orbLocalPoint.x;
+    let contactY = this.orbLocalPoint.y;
+    let contactZ = this.orbLocalPoint.z;
+    const sweepX = this.orbLocalPoint.x - this.orbPreviousLocalPoint.x;
+    const sweepY = this.orbLocalPoint.y - this.orbPreviousLocalPoint.y;
+    const sweepZ = this.orbLocalPoint.z - this.orbPreviousLocalPoint.z;
+    if (orb.held && this.orbSweepReady) {
+      const sweepLengthSquared =
+        sweepX * sweepX + sweepY * sweepY + sweepZ * sweepZ;
+      if (sweepLengthSquared > 0.0001) {
+        const projected =
+          ((solid.position.x - this.orbPreviousLocalPoint.x) * sweepX +
+            (solid.position.y - this.orbPreviousLocalPoint.y) * sweepY +
+            (solid.position.z - this.orbPreviousLocalPoint.z) * sweepZ) /
+          sweepLengthSquared;
+        const sweepProgress = THREE.MathUtils.clamp(projected, 0, 1);
+        contactX = this.orbPreviousLocalPoint.x + sweepX * sweepProgress;
+        contactY = this.orbPreviousLocalPoint.y + sweepY * sweepProgress;
+        contactZ = this.orbPreviousLocalPoint.z + sweepZ * sweepProgress;
+      }
+    }
+    const dx = solid.position.x - contactX;
+    const dy = solid.position.y - contactY;
+    const dz = solid.position.z - contactZ;
+    const contact = orb.radius + solidRadius + (orb.held ? 0.12 : 0);
+    if (dx * dx + dy * dy + dz * dz > contact * contact) return false;
+
+    const planarDistance = Math.hypot(dx, dz);
+    const sweepPlanarDistance = Math.hypot(sweepX, sweepZ);
+    const fallbackAngle = solid.phase + solid.slot * 0.61;
+    const directionX =
+      planarDistance > 0.04
+        ? dx / planarDistance
+        : sweepPlanarDistance > 0.04
+          ? sweepX / sweepPlanarDistance
+          : Math.cos(fallbackAngle);
+    const directionZ =
+      planarDistance > 0.04
+        ? dz / planarDistance
+        : sweepPlanarDistance > 0.04
+          ? sweepZ / sweepPlanarDistance
+          : Math.sin(fallbackAngle);
+    solid.position.y = Math.max(
+      solid.position.y,
+      contactY + orb.radius + solidRadius * 0.72,
+    );
+    solid.releaseVelocity.set(
+      directionX * (1.35 + solid.scale * 0.8),
+      2.65 + solid.scale * 0.85,
+      directionZ * (1.35 + solid.scale * 0.8),
+    );
+    // Let the solid visibly ricochet before the garden's existing checksum
+    // dissolve takes over. This preserves one bounded effect path instead of
+    // adding a second fragment system just for the wisdom orb.
+    solid.releaseAge = this.context.reducedMotion ? 0.14 : 0.42;
+    solid.relocationDuration = 0;
+    return true;
   }
 
   private beginGlitchDissolve(solid: FallingSolid): void {
