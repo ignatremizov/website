@@ -42,6 +42,9 @@ export function disposeObjectTree(
     ) {
       return;
     }
+    // Instance transforms/colours belong to the mesh, not its geometry.
+    // Disposing geometry alone leaves their renderer buffers unreleased.
+    if (object instanceof THREE.InstancedMesh) object.dispose();
     geometries.add(object.geometry);
     const objectMaterials = Array.isArray(object.material)
       ? object.material

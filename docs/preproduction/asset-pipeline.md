@@ -3,7 +3,8 @@
 ## Coordinate and naming conventions
 
 - Blender unit scale: one unit equals one meter.
-- Y is up; glTF forward is +Z.
+- The game and glTF use Y-up; Blender uses Z-up. Let the glTF importer/exporter
+  perform the axis conversion rather than rotating the entire asset manually.
 - Apply scale and rotation before export.
 - Origins sit at the ground center for environment props.
 - Names use `zone_category_asset_variant_lod`.
@@ -16,6 +17,61 @@ art/concepts/       image references, never deployed
 assets/source/      licensed source downloads
 public/assets/      optimized runtime GLB, textures, audio
 ```
+
+## Falls: procedural now, editable art next
+
+Falls stone and water-sheet meshes are currently built once on zone entry by
+`src/game/zones/falls/FallsScenery.ts`. Its fractured cliff surfaces retain their
+authored bounds and flat landing heights. Mineral/moss colors live on vertices,
+while one repeating stone texture supplies the fine surface detail. Recessed
+stone liners close the joins around the cave without adding movement barriers.
+
+For the next substantial environment-art pass, use a hybrid workflow:
+
+1. Author the static cliff silhouettes, overhangs, roots, and sculpted surface
+   detail in Blender. Keep separate visual and collision geometry.
+2. Export optimized GLB chunks and load only the current zone's art. Preserve
+   meter scale, origins, named interaction anchors, and the existing route
+   clearances.
+3. Keep flowing/parting water, spells, crystals, fish, NPCs, and puzzle state in
+   code. Baking a live scene into one model loses those ownership boundaries.
+
+A stored model avoids procedural construction work but adds download and decode
+work. Once uploaded, equivalent geometry/materials have essentially the same GPU
+cost. Mesh/material count, batching, texture size, shadows, and transparent
+overdraw matter more than whether Blender or JavaScript authored the vertices.
+See the [Three.js batching guide](https://threejs.org/manual/en/optimize-lots-of-objects.html).
+Keep this choice measurement-driven; do not add a GLB loader merely to serialize
+the same small procedural meshes.
+
+### Editable geology reference
+
+`art/blender/falls-geology-medium.glb` is a texture-free modeling reference
+generated from the same mesh builders. It includes representative waterfall/cave
+assemblies, a terrace, and small landings with named objects and meter-scale
+dimensions. It is a geology study, **not a complete exported Falls level**:
+foliage, lights, shaders, gameplay, collision registrations, and runtime batching
+are absent. Its simple material tints approximate the runtime textures.
+
+```sh
+npm run art:falls -- medium
+blender --background --threads 2 \
+  --python scripts/render-falls-reference.py -- \
+  art/blender/falls-geology-medium.glb
+```
+
+The exporter also accepts `low` and `high`. Blender writes a sibling editable
+`.blend` and a 1024 × 768 Workbench `.png`, without baking or simulation. The
+preview checks geometry and proportions, not in-game lighting or water shading.
+Its camera, neutral ground, and `Preview tint` color attributes are inspection
+aids; omit them from any future runtime export and retain the original imported
+color attributes. Copy the `.blend` to a new authoring filename before hand edits,
+since rerunning the preview script regenerates that file.
+
+These files remain outside `public/`, so players download none of the reference
+art. Interactive verification remains manual: climb the outer ledges and crown,
+check the cave from behind, and open the waterfall before reviewing the chest
+entrance. Check both Low and Medium/High for silhouette and material readability.
 
 ## Meshy
 

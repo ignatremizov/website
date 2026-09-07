@@ -35,14 +35,26 @@ npm run preview
   draggable crystals and decoys, ordered moon/tide/ember activation, fragile faceted
   crystals whose shattered pieces remain telekinetic, an `R` repair loop, and a hidden
   chest whose celebratory coin/light burst evolves Spark into Surge. Batched trees,
-  bushes, hanging vines, climbable cliff crowns, and a marked ledge loop make the
-  waterfall itself explorable vertically. Surface-height collision preserves jump
-  arcs and a continuous contextual camera across both summit approaches.
+  riverbank glow-bushes, larger soft fireflies, hanging vines, climbable cliff crowns,
+  and a marked ledge loop make the waterfall itself explorable vertically without
+  blocking the crystal-cache sightline. Surface-height collision preserves jump arcs
+  and a continuous contextual camera across both summit approaches.
 - A walk-on checksum Tower of Hanoi in the Signal Grid with three bronze,
   square-holed cash coins, step-climbable dynamic stacks, legal-move validation,
   carried-coin animation, completion-gated peg-tip balancing, a cyan BUFFER
   checkpoint, guarded reset protocol, green SETTLE reward, and board state preserved
   across teleports.
+- A hidden Signal Grid server repair with two loose magnetic patch leads and one
+  draggable floppy. Completing its SNEAKERNET carrier installs `WORM.COM` in every
+  terminal and opens `C2://192.168.0.1:31337`: a compact, accelerating Snake game
+  launched with `worm` or `c2`, with keyboard, swipe, on-screen controls, and a
+  two-turn input buffer. Enter or the restart control relaunches a faulted carrier;
+  Escape or `^C` unloads it. `trace` remains the installation receipt rather than
+  the reward itself. Filling all 308 addresses produces the unpersisted `ROOT PWNED`
+  mastery ending; it is deliberately not an exploration achievement or finale gate.
+  `worm autorun` demonstrates a guaranteed closed-board route while packets continue
+  to appear randomly across every free address; any steering input hijacks it, and
+  assisted rounds do not replace the player's manual high score.
 - Signal Grid's sealed simulation cube performs a short reconstruction boot and opens
   the discoverable physical route into Mightymatica. Crossing it—or explicitly typing
   a hidden Math alias—indexes the destination for later atlas and terminal fast
@@ -121,6 +133,12 @@ npm run preview
   discovery route. `tp <place>` is a separate cyan-pencil rite: the equipped pencil
   moves into the character's drawing hand, a circle and route glyph are traced into
   the floor, and the character kneels before the world transition.
+- Depth-tested click/tap navigation reuses the same collision-aware route solver for
+  ordinary surfaces and portals. A short click follows one route; holding or dragging
+  continuously steers auto-move until release. A small world-space sigil previews the
+  destination, foliage and particles remain pointer-transparent, loose-object and
+  puzzle gestures retain priority, and reachable ledges or lower landings use real
+  jump physics rather than teleporting the avatar.
 - A leather-and-brass satchel button opens a field folio with a persistent milestone
   ledger, discovery-aware Atlas shortcuts, and a cyan-circuit magitech
   settings leaf. Rendering quality, interface contrast, reduced optional motion, HUD

@@ -873,6 +873,10 @@ export class MindReaderWisdomEffects {
     toneMapped: false,
   });
   private readonly cat = createSpectralCat(this.catMaterial);
+  private readonly catTail = this.cat.getObjectByName("mind-reader-cat-tail");
+  private readonly catPaw = this.cat.getObjectByName(
+    "mind-reader-cat-swat-paw",
+  );
   private readonly dragonMaterial = new THREE.MeshBasicMaterial({
     color: color.violet,
     transparent: true,
@@ -882,6 +886,18 @@ export class MindReaderWisdomEffects {
     toneMapped: false,
   });
   private readonly dragon = createCloudDragon(this.dragonMaterial);
+  private readonly dragonHeadRig = this.dragon.getObjectByName(
+    "mind-reader-cloud-dragon-head-rig",
+  );
+  private readonly dragonWhiskers = binaryDirections.map((side) =>
+    this.dragon.getObjectByName(`mind-reader-cloud-dragon-whisker-${side}`),
+  );
+  private readonly dragonBody = this.dragon.getObjectByName(
+    "mind-reader-cloud-dragon-body",
+  );
+  private readonly dragonTail = this.dragon.getObjectByName(
+    "mind-reader-cloud-dragon-tail",
+  );
   private readonly radianceCore = new THREE.Mesh(
     new THREE.IcosahedronGeometry(0.56, 2),
     new THREE.MeshBasicMaterial({
@@ -3898,12 +3914,12 @@ export class MindReaderWisdomEffects {
       (0.82 + Math.sin(elapsed * 5) * 0.025) *
         Math.min(1, envelope * 2.2),
     );
-    const tail = this.cat.getObjectByName("mind-reader-cat-tail");
-    if (tail) tail.rotation.x = Math.sin(elapsed * 4.2) * 0.24;
-    const paw = this.cat.getObjectByName("mind-reader-cat-swat-paw");
-    if (paw) {
+    if (this.catTail) {
+      this.catTail.rotation.x = Math.sin(elapsed * 4.2) * 0.24;
+    }
+    if (this.catPaw) {
       const swat = 1 - Math.min(1, Math.abs(age - catSwatTime) / 0.32);
-      paw.rotation.z = -1.08 - swat * 1.1;
+      this.catPaw.rotation.z = -1.08 - swat * 1.1;
     }
     void progress;
   }
@@ -3924,10 +3940,7 @@ export class MindReaderWisdomEffects {
         envelope *
         (1 + Math.sin(elapsed * 4.5) * 0.05),
     );
-    const headRig = this.dragon.getObjectByName(
-      "mind-reader-cloud-dragon-head-rig",
-    );
-    if (headRig) {
+    if (this.dragonHeadRig) {
       this.sampleDragonPath(travel, storm, this.scratchPosition);
       this.sampleDragonPath(travel + 0.025, storm, this.scratchPositionB);
       this.scratchTangent
@@ -3937,18 +3950,15 @@ export class MindReaderWisdomEffects {
         this.dragonForward,
         this.scratchTangent,
       );
-      headRig.position.copy(this.scratchPosition);
-      headRig.quaternion.copy(this.scratchQuaternion);
+      this.dragonHeadRig.position.copy(this.scratchPosition);
+      this.dragonHeadRig.quaternion.copy(this.scratchQuaternion);
     }
-    for (const side of binaryDirections) {
-      const whisker = this.dragon.getObjectByName(
-        `mind-reader-cloud-dragon-whisker-${side}`,
-      );
+    for (let index = 0; index < binaryDirections.length; index += 1) {
+      const side = binaryDirections[index]!;
+      const whisker = this.dragonWhiskers[index];
       if (whisker) whisker.rotation.x = Math.sin(elapsed * 5 + side) * 0.2;
     }
-    const body = this.dragon.getObjectByName(
-      "mind-reader-cloud-dragon-body",
-    );
+    const body = this.dragonBody;
     if (body instanceof THREE.InstancedMesh) {
       for (let segment = 0; segment < body.count; segment += 1) {
         const lag = segment + 1;
@@ -3983,9 +3993,7 @@ export class MindReaderWisdomEffects {
       }
       body.instanceMatrix.needsUpdate = true;
     }
-    const tail = this.dragon.getObjectByName(
-      "mind-reader-cloud-dragon-tail",
-    );
+    const tail = this.dragonTail;
     if (tail) {
       const tailTravel =
         travel - (body instanceof THREE.InstancedMesh ? body.count + 1 : 17) *

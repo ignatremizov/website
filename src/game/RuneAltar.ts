@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { addCylinder } from "./scenePrimitives";
+import type { QualityTier } from "../world/WorldContracts";
 
 export interface RuneAltarMaterials {
   stone: THREE.Material;
@@ -12,6 +13,7 @@ export interface RuneAltarMaterials {
 export interface RuneAltarHooks {
   onStatus: (message: string) => void;
   getRevealTarget: (target: THREE.Vector3) => THREE.Vector3;
+  onPreparePortfolio: () => void;
   onRevealPortfolio: () => void;
 }
 
@@ -63,6 +65,7 @@ export class RuneAltar {
   private readonly informationTargetWorld = new THREE.Vector3();
   private readonly informationSourceLocal = new THREE.Vector3();
   private readonly informationTargetLocal = new THREE.Vector3();
+  private readonly informationReachedTargetLocal = new THREE.Vector3();
   private readonly informationMidpoint = new THREE.Vector3();
   private readonly informationDirection = new THREE.Vector3();
   private readonly informationUp = new THREE.Vector3(0, 1, 0);
@@ -71,6 +74,7 @@ export class RuneAltar {
   private hasRevealed = false;
   private age = 0;
   private duration = 1.5;
+  private lightingEnabled = true;
 
   constructor(
     materials: RuneAltarMaterials,
@@ -250,6 +254,17 @@ export class RuneAltar {
     this.object.add(this.light);
   }
 
+  setQuality(quality: QualityTier): void {
+    this.lightingEnabled = quality !== "low";
+    this.light.visible = this.lightingEnabled;
+    this.informationTargetLight.visible =
+      this.lightingEnabled && this.informationTargetFlare.visible;
+    if (!this.lightingEnabled) {
+      this.light.intensity = 0;
+      this.informationTargetLight.intensity = 0;
+    }
+  }
+
   hasActiveMotion(): boolean {
     // The held portal still turns at the normal 30 FPS overlay cadence.
     // Only its short opening and closing transitions request 60 FPS.
@@ -267,6 +282,7 @@ export class RuneAltar {
       );
       return;
     }
+    this.hooks.onPreparePortfolio();
     this.phase = "opening";
     this.age = 0;
     this.duration = reducedMotion ? 0.42 : this.hasRevealed ? 0.95 : 1.5;
@@ -292,7 +308,7 @@ export class RuneAltar {
     }
     if (this.phase === "holding") {
       this.updateSustainedActive(delta, elapsed, motionScale, 1);
-      this.updateInformationBeam(elapsed, motionScale, 0.48, 0);
+      this.updateInformationBeam(elapsed, motionScale, 0.48, 0, 1);
       return;
     }
     if (this.phase === "transmitting") {
@@ -300,14 +316,16 @@ export class RuneAltar {
       const progress = THREE.MathUtils.clamp(this.age / this.duration, 0, 1);
       const strength = THREE.MathUtils.smoothstep(progress, 0, 0.18);
       const surge = Math.exp(-Math.pow((progress - 0.76) / 0.17, 2));
+      const reach = THREE.MathUtils.smoothstep(progress, 0.04, 0.84);
       this.updateSustainedActive(delta, elapsed, motionScale, 1);
       this.updateInformationBeam(
         elapsed,
         motionScale,
         strength,
         reducedMotion ? surge * 0.42 : surge,
+        reach,
       );
-      if (progress >= 1) {
+      if (progress >= 0.9) {
         this.phase = "holding";
         this.hooks.onRevealPortfolio();
       }
@@ -329,6 +347,7 @@ export class RuneAltar {
         motionScale,
         strength * 0.48,
         0,
+        1,
       );
       if (progress >= 1) {
         this.phase = "idle";
@@ -372,7 +391,9 @@ export class RuneAltar {
     this.flare.position.y = this.crystal.position.y;
     this.flare.scale.setScalar(0.55 + spinUp * 0.7 + flash * 1.8);
     this.flare.material.opacity = glow * 0.08 + flash * 0.32;
-    this.light.intensity = glow * 2.4 + flash * 7.5;
+    this.light.intensity = this.lightingEnabled
+      ? glow * 2.4 + flash * 7.5
+      : 0;
 
     if (progress >= 0.72) {
       const returningLink = this.hasRevealed;
@@ -381,7 +402,7 @@ export class RuneAltar {
       this.age = 0;
       this.duration = reducedMotion ? 0.14 : returningLink ? 0.42 : 0.64;
       this.hooks.onStatus(
-        "At the crown's apex, a cipher-stream finds your eyes.",
+        "At the crown's apex, a cipher-stream leaps toward your eyes.",
       );
     }
   }
@@ -474,7 +495,7 @@ export class RuneAltar {
             (motionScale < 1 ? 0 : Math.sin(elapsed * 4.2) * 0.08)),
     );
     this.flare.material.opacity = active * 0.13;
-    this.light.intensity = active * 2.8;
+    this.light.intensity = this.lightingEnabled ? active * 2.8 : 0;
   }
 
   private updateIdle(
@@ -503,6 +524,7 @@ export class RuneAltar {
     motionScale: number,
     strength: number,
     surge: number,
+    reach: number,
   ): void {
     const active = THREE.MathUtils.clamp(strength, 0, 1);
     if (active <= 0.002) {
@@ -519,9 +541,17 @@ export class RuneAltar {
     this.object.worldToLocal(
       this.informationTargetLocal.copy(this.informationTargetWorld),
     );
+    this.informationReachedTargetLocal.lerpVectors(
+      this.informationSourceLocal,
+      this.informationTargetLocal,
+      THREE.MathUtils.clamp(reach, 0, 1),
+    );
 
     const length = this.informationDirection
-      .subVectors(this.informationTargetLocal, this.informationSourceLocal)
+      .subVectors(
+        this.informationReachedTargetLocal,
+        this.informationSourceLocal,
+      )
       .length();
     if (length < 0.05) {
       this.hideInformationBeam();
@@ -529,7 +559,10 @@ export class RuneAltar {
     }
     this.informationDirection.multiplyScalar(1 / length);
     this.informationMidpoint
-      .addVectors(this.informationSourceLocal, this.informationTargetLocal)
+      .addVectors(
+        this.informationSourceLocal,
+        this.informationReachedTargetLocal,
+      )
       .multiplyScalar(0.5);
 
     this.informationBeam.visible = true;
@@ -560,7 +593,7 @@ export class RuneAltar {
       const streamPosition = 0.05 + travel * 0.9;
       this.informationPacketDummy.position.lerpVectors(
         this.informationSourceLocal,
-        this.informationTargetLocal,
+        this.informationReachedTargetLocal,
         streamPosition,
       );
       this.informationPacketDummy.quaternion.copy(
@@ -581,17 +614,22 @@ export class RuneAltar {
     this.informationPackets.instanceMatrix.needsUpdate = true;
 
     this.informationTargetFlare.visible = true;
-    this.informationTargetFlare.position.copy(this.informationTargetLocal);
+    this.informationTargetFlare.position.copy(
+      this.informationReachedTargetLocal,
+    );
     this.informationTargetFlare.scale.setScalar(
       0.72 + active * 0.38 + surge * 1.05,
     );
     this.informationTargetFlare.material.opacity =
       active * (0.08 + surge * 0.25);
 
-    this.informationTargetLight.visible = true;
-    this.informationTargetLight.position.copy(this.informationTargetLocal);
-    this.informationTargetLight.intensity =
-      active * (1.2 + surge * 7.2);
+    this.informationTargetLight.visible = this.lightingEnabled;
+    this.informationTargetLight.position.copy(
+      this.informationReachedTargetLocal,
+    );
+    this.informationTargetLight.intensity = this.lightingEnabled
+      ? active * (1.2 + surge * 7.2)
+      : 0;
   }
 
   private hideInformationBeam(): void {

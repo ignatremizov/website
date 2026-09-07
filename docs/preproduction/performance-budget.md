@@ -15,7 +15,7 @@
 
 | Metric | Desktop high | Mobile low |
 | --- | --- | --- |
-| Frame target | 60 active / 30 idle | 30 FPS |
+| Frame target | display-aligned ≈60 active / 30 idle | 30 FPS |
 | Device pixel ratio cap | 1.5 | 1.0 |
 | Visible triangles | under 150k | under 70k |
 | Draw calls | under 75 | under 55 |
@@ -35,8 +35,16 @@
 
 - Pause rendering while the document is hidden.
 - Throttle to 30 FPS while idle. HTML overlays lock world input but retain the
-  same adaptive 30/60 FPS rendering policy as the unobstructed world.
-- Clamp frame delta after tab switches.
+  same adaptive idle/active rendering policy as the unobstructed world.
+- During active motion, measure browser display callbacks and render on the stable
+  whole-callback stride nearest 60 FPS. This avoids periodic dropped callbacks on
+  60.02 Hz panels and uneven alternating gaps on 75/90/100/144/165 Hz displays.
+  Keep the accumulated-deadline policy for idle 30 FPS work, and discard obsolete
+  deadline debt after a long stall instead of rendering catch-up frames.
+- Clamp simulation delta after tab switches, but measure FPS, p95 frame time, and
+  worst frame time from raw rendered-frame wall-clock intervals. Reset both pacing
+  and metrics when the document resumes so hidden-tab time is not reported as a
+  hitch.
 - Dispose zone geometries, owned materials, material textures (including Sprite
   resources), and colliders through one deduplicating object-tree traversal.
 - Batch compatible static meshes and monitor traces by material.
@@ -141,9 +149,12 @@
 - Render all interactive rune tinkles through one 36-point circular pool and one
   shared, brief shadowless light. All six cache candidates reuse one five-shard
   transform template, with facets and cores instanced per cluster plus one bounded
-  aura and ground glow. After shattering, required runes reuse five transparent
+  aura and ground glow. Every glow material shares one disposable 64px radial alpha
+  texture. After shattering, required runes reuse five transparent
   raycast proxies that drive their existing rendered instances; decoys expose five
   lightweight visible shard proxies. Neither route allocates lights or unbounded debris.
+  Under reduced motion, intact rune matrices upload only for a tinkle or state change;
+  broken records continue uploading only while their proxies are held or moving.
 - Reuse one Falls splash ring and at most 18 instanced droplets for high dives. Avatar
   rest and recovery use scalar pose blends on the existing rig.
 - Keep Thunder's sky strikes and Grid rack chain inside one preallocated 96-segment
@@ -216,11 +227,12 @@
   surface and no blocking side collider, while the answer billboard remains upright.
   It also reuses the needle experiment's existing traveling-body interference path
   rather than adding a second per-frame needle scan.
-- Keep Archive space-pinball physics to the quality-visible orbit records and at most
-  ten planet-pair checks on high quality (six on medium, one on low). Reuse one world
-  vector per record, update scalar spring/impact state in place, and cap active space
-  asteroids at five shared kickable records. Planet pointer picking may allocate only
-  in pointer events, never the render loop. Do not add a general rigid-body dependency.
+- Keep all five Archive space-pinball planets visible and interactive at every quality
+  tier so presentation settings cannot change the traversal sandbox. Their bounded
+  update performs at most ten planet-pair checks. Reuse one world vector per record,
+  update scalar spring/impact state in place, and cap active space asteroids at five
+  shared kickable records. Planet pointer picking may allocate only in pointer events,
+  never the render loop. Do not add a general rigid-body dependency.
 - Keep the Archive order and ascension responses to one normally hidden ring, one
   additive four-point star mesh, existing atlas materials, and one shadowless point
   light. Before ascension its intensity is zero outside the 1.65-second restoration
@@ -251,7 +263,38 @@
   surfaces and colliders remain lightweight data records. Measure climbable world
   bounds only during zone construction using the existing reusable `Box3`; never
   recompute mesh bounds in the frame loop.
-- Use one shadowless player-lantern light and opacity-only reveal stencils.
+- Build waterfall shells, terraces, and parkour ledges from static layered-cliff
+  geometry with 8/12/16 perimeter points on low/medium/high and at most six
+  vertical strata. Keep its cardinal top points at the authored extents so the
+  existing climbable bounds remain stable; batch the resulting meshes with their
+  shared cliff materials rather than animating individual rocks.
+- Render Falls fireflies in one dynamic points draw using one disposable 32px glow
+  texture, with 18/34/48 visible records on low/medium/high. Use no firefly lights
+  on low, one roaming shadowless swarm light on medium, and two on high. Pool ritual
+  illumination into one visible tinkle-only slot on low, two ambient slots on
+  medium, and three ambient slots on high; slot zero also leases the tinkle flash.
+  Keep those quality-tier counts stable through seating, shattering, restoration,
+  and tinkles so Three.js does not rebuild scene PBR programs on interaction. Each
+  ambient slot retains one deterministic intact crystal until it breaks or
+  disappears; player movement and crystal crossings must not reorder light colors.
+  The combined ritual and firefly budget is therefore 1/3/5 visible point lights
+  on low/medium/high. Prewarm count-zero socket-root instances for two entry
+  frames, then remove them from rendering until growth begins.
+- Keep the Signal Grid server repair to two fixed 14-point cable buffers, three
+  lightweight kickable props, and one three-instance status-light batch. Cable
+  curves update only while Grid is active; completion persists through the hidden
+  achievement ledger and adds no required portal milestone.
+- Keep `WORM.COM` in the eager shell with one fixed 22 × 14 canvas and five reusable
+  control buttons. Run no continuous gameplay loop: schedule only its current
+  90–150 ms game tick (110–175 ms with reduced motion), clear that timer on
+  pause/close, and suspend it while the document is hidden. The `ROOT PWNED` render
+  may use one bounded 1.65-second animation and must cancel it on reset or teardown.
+  Autorun reuses that same timer and one fixed 308-cell route; it must not add a
+  second scheduler or continuous search.
+- Use one shadowless player-lantern light and opacity-only reveal stencils. Field
+  Station's five lantern props retain emissive meshes and ground pools but lease only
+  two stable shadowless point-light slots nearest the player on medium/high; low keeps
+  both slots hidden. Lighting a distant prop never adds a renderer light.
 - Represent the turtle's storm clue with one static low-poly stone and one
   opacity-only lightning shape in the existing lantern-reveal update. Sleeping and
   waking swap visibility between one two-segment eyelid mesh and the existing
@@ -267,6 +310,11 @@
   created, while translucent covers such as waterfall panels opt in explicitly.
   Register each Signal Grid rack as one recursive group; intentionally transparent
   climbables such as the Archive star atlas opt out.
+- Build each Signal Grid cabinet's plinth, shell, compute blades, vents, rails, and
+  instrumentation from shared opaque materials so static batching absorbs the added
+  detail. Keep only three activity bars and one existing crystal core dynamic per
+  rack; idle activity mutates their transforms without allocating, adding lights, or
+  changing the rack collider.
 - Hold the river monument's already allocated ring, beam, flare, and light state while
   its portfolio dialog is open. The hold uses the normal 30 FPS overlay cadence;
   only its bounded opening and close wind-down request 60 FPS.
@@ -275,7 +323,11 @@
   bounded instance records; direct button picking runs only on pointer events.
   Surge and Thunder may relaunch the existing needle instances, but activate them in
   quality-scaled 24/40/56-record chunks (Thunder may raise a chunk by 35%) rather than
-  rebuilding geometry or waking all 720 records in one frame.
+  rebuilding geometry or waking all 720 records in one frame. Keep the live estimate
+  texture at a 384×144 backing resolution, cache its context and gradient, upload it
+  at most four times per second while changing, and render the completed sample
+  immediately. Launch the first spell-reactive chunk in the cast's own update; defer
+  only the final result message so status readability never delays physical feedback.
 - Keep Infinite Chocolate manipulation to one invisible four-instance picking proxy
   with one fixed roaming broad-phase sphere and precise per-instance ray tests.
   Detailed slab meshes remain independent. Bake the board's non-uniform cell scale
@@ -285,6 +337,20 @@
   possible slab pairs with at most two bounded OBB/SAT passes per active update;
   fixed cut/seam helpers fade while the arrangement is disturbed.
 - Avoid per-frame allocations in movement and camera loops.
+- Keep click navigation event-driven. Sample hover projection at most once per
+  display frame, reuse one ray-hit array and analytic surface-plane scratch state,
+  and run A* only on click or after a genuinely stalled route. The destination
+  sigil remains three draws: one ring, one center, and one four-instance tick batch.
+  Elevated routes may append one ordinary physics jump but must not run a continuous
+  parkour or navmesh search.
+- Query stable collider and landing-surface records through an insertion-ordered
+  uniform grid. Keep moving rocks, scraps, turtle/Hanoi surfaces, and math props in a
+  live mutable lane; removals and zone teardown must clear both the authoritative
+  arrays and index. Preserve original candidate order and re-query penetration after
+  each correction.
+- Before avatar-occlusion rays, update each unique required ancestor once and each
+  outermost visible registered occluder subtree once. Do not refresh the entire zone
+  hierarchy or alter the three-height ray/render-pass behavior.
 - Load only the active zone and a small shared player kit.
 
 ## Vertical-slice measurement
@@ -297,13 +363,13 @@ level-6 gzip; runtime draw-call observations remain manual.
 Measured on the vertical slice:
 
 <!-- build-metrics:start -->
-- Shell JavaScript: 54.55 kB minified / 18.20 kB gzip.
-- Shell CSS: 80.85 kB minified / 18.28 kB gzip.
+- Shell JavaScript: 74.24 kB minified / 24.50 kB gzip.
+- Shell CSS: 85.32 kB minified / 19.27 kB gzip.
 - In-page hero: 252.69 kB WebP (the 528.42 kB JPEG remains social metadata only).
-- Lazy game code: 577.35 kB minified / 166.01 kB gzip.
-- Nested Mightymatica code: 182.51 kB minified / 54.70 kB gzip.
+- Lazy game code: 690.07 kB minified / 198.56 kB gzip.
+- Nested Mightymatica code: 187.10 kB minified / 56.08 kB gzip.
 - Lazy Three.js: 591.73 kB minified / 148.86 kB gzip.
-- First-playable JavaScript after the shell: about 315 kB gzip.
+- First-playable JavaScript after the shell: about 347 kB gzip.
 <!-- build-metrics:end -->
 - General-purpose WASM physics payload: zero; top-down collision is local game code.
 - Verified scenes: 43–72 calls across exploration positions, below the 75-call

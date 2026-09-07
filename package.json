@@ -15,6 +15,7 @@
     "test": "npm run test:unit",
     "test:unit": "node --experimental-strip-types --test tests/*.test.mjs",
     "check": "npm run type-check && npm run test:unit",
+    "art:falls": "node --experimental-strip-types scripts/export-falls-reference.mjs",
     "update:performance-budget": "node scripts/update-performance-budget.mjs"
   },
   "dependencies": {

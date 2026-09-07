@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import type { QualityTier } from "../world/WorldContracts";
 
 const circlePointCount = 81;
 const circleSegmentCount = 64;
@@ -100,6 +101,7 @@ export class PencilTeleportRitual {
   private progress = 0;
   private reducedMotion = false;
   private disposed = false;
+  private lightingEnabled = true;
 
   constructor(scene: THREE.Scene) {
     this.group.name = "cyan-pencil-teleport-ritual";
@@ -479,6 +481,12 @@ export class PencilTeleportRitual {
     return -(drawingTurn + departureTurn) * Math.PI * 2;
   }
 
+  setQuality(quality: QualityTier): void {
+    this.lightingEnabled = quality !== "low";
+    this.light.visible = this.lightingEnabled;
+    if (!this.lightingEnabled) this.light.intensity = 0;
+  }
+
   start(
     position: THREE.Vector3,
     heading: number,
@@ -743,8 +751,9 @@ export class PencilTeleportRitual {
       this.beam.visible = false;
       this.flashDisc.material.opacity = 0;
       this.beam.material.opacity = 0;
-      this.light.intensity =
-        1.1 + smoothRange(this.progress, 0.28, 0.72) * 3.6;
+      this.light.intensity = this.lightingEnabled
+        ? 1.1 + smoothRange(this.progress, 0.28, 0.72) * 3.6
+        : 0;
       return;
     }
 
@@ -766,11 +775,12 @@ export class PencilTeleportRitual {
     );
     this.beam.material.opacity =
       flashEnvelope * flashFade * 0.3;
-    this.light.intensity =
-      flashFade *
-      (this.reducedMotion
-        ? 2.8 + flashEnvelope * 2.2
-        : 4.2 + flashEnvelope * 13.5);
+    this.light.intensity = this.lightingEnabled
+      ? flashFade *
+        (this.reducedMotion
+          ? 2.8 + flashEnvelope * 2.2
+          : 4.2 + flashEnvelope * 13.5)
+      : 0;
   }
 
   stop(): void {
@@ -790,6 +800,8 @@ export class PencilTeleportRitual {
     this.stop();
     this.disposed = true;
     scene.remove(this.group);
+    this.glyphStrokes.dispose();
+    this.pillarSegments.dispose();
     this.circle.geometry.dispose();
     this.circle.material.dispose();
     this.circleStroke.geometry.dispose();

@@ -9,6 +9,10 @@ import type { Kickable } from "../../Kickable";
 import type { SurfaceArea } from "../../SurfaceSelection";
 import type { WorldCollapseFrame } from "../../WorldCollapseSequence";
 import { addBox, addCylinder } from "../../scenePrimitives";
+import {
+  fallsRitualLightCapacity,
+  getFallsPointLightBudget,
+} from "./FallsLightBudget";
 
 type RuneId = "moon" | "tide" | "ember";
 
@@ -34,6 +38,7 @@ export interface FallsRitualFishBaitSource {
 export interface FallsFishBaitShard {
   proxy: THREE.Mesh | null;
   kickable: Kickable | null;
+  readonly fishBaitEligible: boolean;
   consumed: boolean;
   fishBaitAge: number;
 }
@@ -110,6 +115,12 @@ export interface FallsRuneRitualHost {
   moveInteraction: (id: string, x: number, z: number) => void;
   refreshCollisionDebug: () => void;
   cancelKickableHold: (kickable: Kickable) => void;
+  recallFlyingFishMagic: (
+    target: THREE.Vector3,
+    color: THREE.Color,
+    maximumSchools: number,
+    duration: number,
+  ) => number;
   settleFlyingFishSchools: () => boolean;
   surfaceContainsPoint: (
     surface: SurfaceArea,
@@ -132,6 +143,7 @@ export interface FallsRuneRitualHost {
 interface RitualCrystalCarry {
   id: string;
   affinity: RuneId | null;
+  color: THREE.Color;
   object: THREE.Object3D;
   kickable: Kickable;
   shadow: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>;
@@ -140,6 +152,13 @@ interface RitualCrystalCarry {
   socketedAt: RuneId | null;
   shatteredAtSocket: RuneId | null;
   impactCooldownUntil: number;
+  restorationAge: number;
+  restorationDuration: number;
+}
+
+interface RitualLightSlot {
+  light: THREE.PointLight;
+  target: RitualCrystalCarry | null;
 }
 
 interface FallsRuneShard extends FallsFishBaitShard {
@@ -148,6 +167,8 @@ interface FallsRuneShard extends FallsFishBaitShard {
   rotation: THREE.Euler;
   velocity: THREE.Vector3;
   spin: THREE.Vector3;
+  lastMatrixPosition: THREE.Vector3;
+  lastMatrixRotation: THREE.Euler;
 }
 
 interface RuneCrystalState {
@@ -181,6 +202,8 @@ interface RuneCrystalState {
   breakAge: number;
   activated: boolean;
   broken: boolean;
+  ambientRotation: number;
+  matrixDirty: boolean;
 }
 
 interface RuneSocketRoot {
@@ -244,11 +267,18 @@ interface RuneDiagnosticTrace {
   packet: THREE.Mesh<THREE.OctahedronGeometry, THREE.MeshBasicMaterial>;
   positions: Float32Array;
   targets: RitualCrystalCarry[];
+  restorations: (RitualCrystalRestorationResult | null)[];
   pointCount: number;
   age: number;
   duration: number;
+  nextRestorationIndex: number;
   nextTargetIndex: number;
   active: boolean;
+}
+
+interface RitualCrystalRestorationResult {
+  restored: boolean;
+  consumedShards: number;
 }
 
 interface ChestBurst {
@@ -307,6 +337,11 @@ const runeCrystalShardTemplates = [
   },
 ] as const;
 
+// The tallest central facet is the fractured cluster's persistent physical
+// anchor. It remains movable and traceable, but the fish may only consume the
+// four smaller loose facets around it.
+const runeCrystalAnchorShardIndex = 1;
+
 export class FallsRuneRitual {
   private root: THREE.Group | null = null;
   private chestLid: THREE.Group | null = null;
@@ -326,9 +361,13 @@ export class FallsRuneRitual {
   private readonly ritualCrystals: RitualCrystalCarry[] = [];
   private readonly fishBaitSources: FallsRitualFishBaitSource[] = [];
   private runeSparkles: RuneSparklePool | null = null;
-  private runeTinkleLight: THREE.PointLight | null = null;
+  private readonly ritualLightSlots: RitualLightSlot[] = [];
+  private runeGroundGlowTexture: THREE.CanvasTexture | null = null;
   private runeTinkleAge = 2;
+  private runeTinkleBaseIntensity = 0;
+  private runeTinkleLightLeased = false;
   private runeTinklePeakIntensity = 0;
+  private socketRootWarmupFrames = 0;
   private runeDiagnosticTrace: RuneDiagnosticTrace | null = null;
   private runeProgress = 0;
   private fantasyPuzzleSolved = false;
@@ -433,6 +472,7 @@ export class FallsRuneRitual {
     this.syncRitualSocketPlacementStates();
     this.syncRuneCrystalLocks();
     this.updateRuneInteractionLabels();
+    this.socketRootWarmupFrames = 2;
   }
 
   unmount(): void {
@@ -452,9 +492,13 @@ export class FallsRuneRitual {
     this.ritualCrystals.length = 0;
     this.fishBaitSources.length = 0;
     this.runeSparkles = null;
-    this.runeTinkleLight = null;
+    this.ritualLightSlots.length = 0;
+    this.runeGroundGlowTexture = null;
     this.runeTinkleAge = 2;
+    this.runeTinkleBaseIntensity = 0;
+    this.runeTinkleLightLeased = false;
     this.runeTinklePeakIntensity = 0;
+    this.socketRootWarmupFrames = 0;
     this.runeDiagnosticTrace = null;
     this.runeProgress = 0;
     this.fantasyPuzzleSolved = false;
@@ -480,6 +524,30 @@ export class FallsRuneRitual {
       const quality = this.host.getQuality();
       this.runeSparkles.points.material.size =
         quality === "low" ? 0.1 : quality === "medium" ? 0.13 : 0.15;
+    }
+    this.syncRitualLightVisibility();
+  }
+
+  private syncRitualLightVisibility(): void {
+    const budget = getFallsPointLightBudget(this.host.getQuality());
+    const tinkleActive =
+      this.runeTinkleLightLeased &&
+      !this.host.isReducedMotion() &&
+      this.runeTinkleAge < 0.62;
+    if (budget.ritualAmbientSlots === 0) {
+      this.runeTinkleBaseIntensity = 0;
+    }
+    for (const [index, slot] of this.ritualLightSlots.entries()) {
+      // This is the only ritual-light visibility write. It runs at mount and
+      // on explicit quality changes, never during a crystal interaction.
+      slot.light.visible = index < budget.ritualVisibleSlots;
+      if (
+        index >= budget.ritualAmbientSlots &&
+        !(index === 0 && tinkleActive)
+      ) {
+        slot.light.intensity = 0;
+        slot.target = null;
+      }
     }
   }
 
@@ -633,6 +701,11 @@ export class FallsRuneRitual {
     trace.duration = this.host.isReducedMotion()
       ? Math.max(1.45, targets.length * 0.38)
       : 0.65 + targets.length * 0.7;
+    trace.restorations = Array.from(
+      { length: targets.length },
+      () => null,
+    );
+    trace.nextRestorationIndex = 0;
     trace.nextTargetIndex = 0;
     trace.active = true;
     trace.path.material.color.setHex(this.host.colors.violet);
@@ -1003,11 +1076,20 @@ export class FallsRuneRitual {
       maximumCount,
     };
 
-    this.runeTinkleLight = new THREE.PointLight(this.host.colors.cyan, 0, 4.8, 2);
-    this.runeTinkleLight.name = "rune-tinkle-light";
-    this.runeTinkleLight.castShadow = false;
-    parent.add(this.runeTinkleLight);
+    for (let index = 0; index < fallsRitualLightCapacity; index += 1) {
+      const light = new THREE.PointLight(this.host.colors.cyan, 0, 5.8, 2);
+      light.name =
+        index === 0
+          ? "falls-shared-rune-tinkle-light"
+          : `falls-pooled-ritual-light-${index + 1}`;
+      light.castShadow = false;
+      parent.add(light);
+      this.ritualLightSlots.push({ light, target: null });
+    }
+    this.syncRitualLightVisibility();
     this.runeTinkleAge = 2;
+    this.runeTinkleBaseIntensity = 0;
+    this.runeTinkleLightLeased = false;
     this.runeTinklePeakIntensity = 0;
 
     // Three named runes always participate. Broken decoys may be appended to
@@ -1049,9 +1131,11 @@ export class FallsRuneRitual {
       packet: tracePacket,
       positions: tracePositions,
       targets: [],
+      restorations: [],
       pointCount: 0,
       age: 3,
       duration: 2.75,
+      nextRestorationIndex: 0,
       nextTargetIndex: 0,
       active: false,
     };
@@ -1361,7 +1445,10 @@ export class FallsRuneRitual {
     roots.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     roots.frustumCulled = false;
     roots.castShadow = false;
-    roots.visible = false;
+    // Two count-zero warmup frames compile this instanced PBR variant during
+    // zone entry instead of on the first correctly seated crystal.
+    roots.count = 0;
+    roots.visible = true;
     group.add(roots);
 
     parent.add(group);
@@ -1378,6 +1465,41 @@ export class FallsRuneRitual {
       revealUntil: 0,
       growth: 0,
     });
+  }
+
+  private getRuneGroundGlowTexture(): THREE.CanvasTexture {
+    if (this.runeGroundGlowTexture) {
+      return this.runeGroundGlowTexture;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = 64;
+    canvas.height = 64;
+    const context = canvas.getContext("2d");
+    if (context) {
+      context.fillStyle = "#000";
+      context.fillRect(0, 0, 64, 64);
+      const gradient = context.createRadialGradient(
+        32,
+        32,
+        1,
+        32,
+        32,
+        31,
+      );
+      gradient.addColorStop(0, "#fff");
+      gradient.addColorStop(0.28, "#e8e8e8");
+      gradient.addColorStop(0.68, "#686868");
+      gradient.addColorStop(1, "#000");
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, 64, 64);
+    }
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.name = "falls-rune-ground-glow-gradient";
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.generateMipmaps = false;
+    this.runeGroundGlowTexture = texture;
+    return texture;
   }
 
   private createRitualCrystalShadow(
@@ -1501,13 +1623,15 @@ export class FallsRuneRitual {
     cluster.add(aura);
 
     const groundGlow = new THREE.Mesh(
-      new THREE.CircleGeometry(1.12, 24),
+      new THREE.CircleGeometry(1.48, 28),
       new THREE.MeshBasicMaterial({
         color,
+        alphaMap: this.getRuneGroundGlowTexture(),
         transparent: true,
-        opacity: 0.075,
+        opacity: 0.22,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
+        toneMapped: false,
       }),
     );
     groundGlow.rotation.x = -Math.PI / 2;
@@ -1565,6 +1689,7 @@ export class FallsRuneRitual {
     const carry: RitualCrystalCarry = {
       id,
       affinity: null,
+      color: color.clone(),
       object: group,
       kickable,
       shadow,
@@ -1573,20 +1698,27 @@ export class FallsRuneRitual {
       socketedAt: null,
       shatteredAtSocket: null,
       impactCooldownUntil: 0,
+      restorationAge: 0,
+      restorationDuration: 0,
     };
     this.ritualCrystals.push(carry);
 
-    const shards: FallsRuneShard[] = runeCrystalShardTemplates.map((shard) => ({
-      origin: new THREE.Vector3(...shard.origin),
-      scale: new THREE.Vector3(...shard.scale),
-      rotation: new THREE.Euler(...shard.rotation),
-      velocity: new THREE.Vector3(...shard.velocity),
-      spin: new THREE.Vector3(...shard.spin),
-      proxy: null,
-      kickable: null,
-      consumed: false,
-      fishBaitAge: 0,
-    }));
+    const shards: FallsRuneShard[] = runeCrystalShardTemplates.map(
+      (shard, index) => ({
+        origin: new THREE.Vector3(...shard.origin),
+        scale: new THREE.Vector3(...shard.scale),
+        rotation: new THREE.Euler(...shard.rotation),
+        velocity: new THREE.Vector3(...shard.velocity),
+        spin: new THREE.Vector3(...shard.spin),
+        lastMatrixPosition: new THREE.Vector3(),
+        lastMatrixRotation: new THREE.Euler(),
+        proxy: null,
+        kickable: null,
+        fishBaitEligible: index !== runeCrystalAnchorShardIndex,
+        consumed: false,
+        fishBaitAge: 0,
+      }),
+    );
     const proxyGeometry = new THREE.OctahedronGeometry(1, 0);
     const proxyMaterial = facetMaterial.clone();
     for (const [index, shard] of shards.entries()) {
@@ -1682,17 +1814,22 @@ export class FallsRuneRitual {
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
-    const shards: FallsRuneShard[] = runeCrystalShardTemplates.map((shard) => ({
-      origin: new THREE.Vector3(...shard.origin),
-      scale: new THREE.Vector3(...shard.scale),
-      rotation: new THREE.Euler(...shard.rotation),
-      velocity: new THREE.Vector3(...shard.velocity),
-      spin: new THREE.Vector3(...shard.spin),
-      proxy: null,
-      kickable: null,
-      consumed: false,
-      fishBaitAge: 0,
-    }));
+    const shards: FallsRuneShard[] = runeCrystalShardTemplates.map(
+      (shard, index) => ({
+        origin: new THREE.Vector3(...shard.origin),
+        scale: new THREE.Vector3(...shard.scale),
+        rotation: new THREE.Euler(...shard.rotation),
+        velocity: new THREE.Vector3(...shard.velocity),
+        spin: new THREE.Vector3(...shard.spin),
+        lastMatrixPosition: new THREE.Vector3(),
+        lastMatrixRotation: new THREE.Euler(),
+        proxy: null,
+        kickable: null,
+        fishBaitEligible: index !== runeCrystalAnchorShardIndex,
+        consumed: false,
+        fishBaitAge: 0,
+      }),
+    );
     const facets = new THREE.InstancedMesh(
       new THREE.OctahedronGeometry(1, 0),
       facetMaterial,
@@ -1730,13 +1867,15 @@ export class FallsRuneRitual {
     group.add(aura);
 
     const groundGlow = new THREE.Mesh(
-      new THREE.CircleGeometry(1.12, 24),
+      new THREE.CircleGeometry(1.48, 28),
       new THREE.MeshBasicMaterial({
         color,
+        alphaMap: this.getRuneGroundGlowTexture(),
         transparent: true,
-        opacity: 0.1,
+        opacity: 0.24,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
+        toneMapped: false,
       }),
     );
     groundGlow.rotation.x = -Math.PI / 2;
@@ -1787,6 +1926,7 @@ export class FallsRuneRitual {
     const carry: RitualCrystalCarry = {
       id,
       affinity: id,
+      color: color.clone(),
       object: group,
       kickable: crystalKickable,
       shadow,
@@ -1795,6 +1935,8 @@ export class FallsRuneRitual {
       socketedAt: null,
       shatteredAtSocket: null,
       impactCooldownUntil: 0,
+      restorationAge: 0,
+      restorationDuration: 0,
     };
     this.ritualCrystals.push(carry);
 
@@ -1857,6 +1999,8 @@ export class FallsRuneRitual {
       breakAge: 2,
       activated: false,
       broken: false,
+      ambientRotation: 0,
+      matrixDirty: true,
     };
     this.updateRuneCrystalMatrices(state);
     return state;
@@ -1882,6 +2026,8 @@ export class FallsRuneRitual {
           shard.proxy.position.z - rune.group.position.z,
         );
         rune.dummy.rotation.copy(shard.proxy.rotation);
+        shard.lastMatrixPosition.copy(shard.proxy.position);
+        shard.lastMatrixRotation.copy(shard.proxy.rotation);
       } else {
         rune.dummy.position.set(
           shard.origin.x,
@@ -1890,7 +2036,8 @@ export class FallsRuneRitual {
         );
         rune.dummy.rotation.set(
           shard.rotation.x,
-          shard.rotation.y + this.host.getElapsed() * (0.06 + index * 0.01),
+          shard.rotation.y +
+            rune.ambientRotation * (0.06 + index * 0.01),
           shard.rotation.z,
         );
       }
@@ -1917,8 +2064,11 @@ export class FallsRuneRitual {
     rune.aura.material.opacity =
       rune.broken ? 0 : 0.04 + Number(rune.activated) * 0.06 + pulse * 0.11;
     rune.groundGlow.material.opacity =
-      rune.broken ? 0.018 : 0.075 + Number(rune.activated) * 0.08 + pulse * 0.16;
+      rune.broken
+        ? 0.025
+        : 0.2 + Number(rune.activated) * 0.12 + pulse * 0.2;
     rune.cracks.visible = rune.hits >= 3 && !rune.broken;
+    rune.matrixDirty = false;
   }
 
   private updateRitualCrystalPlacements(): void {
@@ -2039,6 +2189,7 @@ export class FallsRuneRitual {
       this.runeProgress = 0;
       for (const candidate of this.runeStones.values()) {
         candidate.activated = false;
+        candidate.matrixDirty = true;
       }
       this.syncRuneCrystalLocks();
       this.host.onStatus(
@@ -2110,6 +2261,7 @@ export class FallsRuneRitual {
     strength = 1,
   ): void {
     rune.pulseAge = 0;
+    rune.matrixDirty = true;
     this.triggerCrystalTinkle(
       rune.group.position,
       rune.color,
@@ -2169,23 +2321,32 @@ export class FallsRuneRitual {
     for (const rune of this.runeStones.values()) twinkle(rune);
     for (const decoy of this.ritualDecoys.values()) twinkle(decoy);
 
-    if (twinkled > 0 && this.runeTinkleLight) {
-      this.runeTinkleLight.position.set(
-        centerX / twinkled,
-        centerY / twinkled + 1.15,
-        centerZ / twinkled,
-      );
-      this.runeTinkleLight.color.setRGB(
-        colorR / twinkled,
-        colorG / twinkled,
-        colorB / twinkled,
-      );
+    const tinkleLight = this.ritualLightSlots[0]?.light;
+    if (twinkled > 0 && tinkleLight) {
       this.runeTinklePeakIntensity =
         (this.host.getQuality() === "low" ? 0.75 : 1.2) *
         stageStrength *
         (0.85 + charge * 0.25);
-      this.runeTinkleLight.intensity = this.runeTinklePeakIntensity;
       this.runeTinkleAge = 0;
+      if (!this.host.isReducedMotion()) {
+        if (!this.runeTinkleLightLeased) {
+          this.runeTinkleBaseIntensity = tinkleLight.intensity;
+        }
+        this.runeTinkleLightLeased = true;
+        tinkleLight.position.set(
+          centerX / twinkled,
+          centerY / twinkled + 1.15,
+          centerZ / twinkled,
+        );
+        tinkleLight.color.setRGB(
+          colorR / twinkled,
+          colorG / twinkled,
+          colorB / twinkled,
+        );
+        tinkleLight.distance = 4.8;
+        tinkleLight.intensity =
+          this.runeTinkleBaseIntensity + this.runeTinklePeakIntensity;
+      }
     }
     return twinkled;
   }
@@ -2202,17 +2363,25 @@ export class FallsRuneRitual {
       hits,
       Math.round(9 * strength),
     );
-    if (!this.runeTinkleLight) return;
-    this.runeTinkleLight.color.copy(color);
-    this.runeTinkleLight.position.set(
+    const tinkleLight = this.ritualLightSlots[0]?.light;
+    if (!tinkleLight) return;
+    this.runeTinklePeakIntensity =
+      (this.host.getQuality() === "low" ? 0.75 : 1.2) * strength;
+    this.runeTinkleAge = 0;
+    if (this.host.isReducedMotion()) return;
+    if (!this.runeTinkleLightLeased) {
+      this.runeTinkleBaseIntensity = tinkleLight.intensity;
+    }
+    this.runeTinkleLightLeased = true;
+    tinkleLight.color.copy(color);
+    tinkleLight.position.set(
       position.x,
       position.y + 1.15,
       position.z,
     );
-    this.runeTinklePeakIntensity =
-      (this.host.getQuality() === "low" ? 0.75 : 1.2) * strength;
-    this.runeTinkleLight.intensity = this.runeTinklePeakIntensity;
-    this.runeTinkleAge = 0;
+    tinkleLight.distance = 4.8;
+    tinkleLight.intensity =
+      this.runeTinkleBaseIntensity + this.runeTinklePeakIntensity;
   }
 
   private getRuneForCarry(carry: RitualCrystalCarry): RuneCrystalState | null {
@@ -2265,6 +2434,34 @@ export class FallsRuneRitual {
       anchorScale = scale;
     }
     return anchor;
+  }
+
+  private describeRemainingLesserFacets(
+    carry: RitualCrystalCarry,
+    faintly: boolean,
+  ): string {
+    const shards =
+      this.getRuneForCarry(carry)?.shards ??
+      this.getDecoyForCarry(carry)?.shards ??
+      [];
+    const anchor = this.getRitualCrystalAnchorShard(carry);
+    const remaining = shards.filter(
+      (shard) =>
+        shard !== anchor &&
+        !shard.consumed &&
+        shard.proxy?.visible === true &&
+        shard.kickable?.enabled === true,
+    ).length;
+    if (remaining === 0) {
+      return "No lesser piece answers. The river's bright mouths have swallowed every facet they could take.";
+    }
+    const count =
+      ["No", "One", "Two", "Three", "Four"][remaining] ??
+      String(remaining);
+    const noun = remaining === 1 ? "piece" : "pieces";
+    const verb = remaining === 1 ? "answers" : "answer";
+    const pronoun = remaining === 1 ? "it has" : "they have";
+    return `${count} lesser ${noun} ${verb} it${faintly ? " faintly" : ""} from wherever ${pronoun} fallen.`;
   }
 
   private getRitualCrystalTargetObject(
@@ -2338,10 +2535,14 @@ export class FallsRuneRitual {
 
   private breakFantasyRune(rune: RuneCrystalState): void {
     const wasPlaced = rune.carry.socketedAt !== null;
+    rune.carry.restorationAge = 0;
+    rune.carry.restorationDuration = 0;
+    rune.carry.object.scale.setScalar(1);
     rune.broken = true;
     rune.placed = false;
     rune.activated = false;
     rune.breakAge = 0;
+    rune.matrixDirty = true;
     rune.carry.shatteredAtSocket = rune.carry.socketedAt;
     rune.carry.socketedAt = null;
     rune.carry.object.userData.ritualSocketed = false;
@@ -2350,6 +2551,7 @@ export class FallsRuneRitual {
     this.runeProgress = 0;
     for (const candidate of this.runeStones.values()) {
       candidate.activated = false;
+      candidate.matrixDirty = true;
     }
     this.syncRitualSocketPlacementStates();
     for (const shard of rune.shards) {
@@ -2389,7 +2591,7 @@ export class FallsRuneRitual {
         0.62,
       );
       this.host.onStatus(
-        "The largest facet still carries the cluster's impossible light. Four lesser pieces answer it from wherever they have fallen.",
+        `The largest facet still carries the cluster's impossible light. ${this.describeRemainingLesserFacets(rune.carry, false)}`,
       );
       return;
     }
@@ -2423,7 +2625,7 @@ export class FallsRuneRitual {
         0.62,
       );
       this.host.onStatus(
-        "The largest facet still shines with borrowed colour. Four lesser pieces answer it faintly from wherever they fell.",
+        `The largest facet still shines with borrowed colour. ${this.describeRemainingLesserFacets(crystal.carry, true)}`,
       );
       return;
     }
@@ -2469,6 +2671,9 @@ export class FallsRuneRitual {
 
   private breakLooseDecoyCrystal(crystal: RitualDecoyCrystalState): void {
     const wasPlaced = crystal.carry.socketedAt !== null;
+    crystal.carry.restorationAge = 0;
+    crystal.carry.restorationDuration = 0;
+    crystal.carry.object.scale.setScalar(1);
     crystal.broken = true;
     crystal.breakAge = 0;
     crystal.carry.shatteredAtSocket = crystal.carry.socketedAt;
@@ -2537,7 +2742,8 @@ export class FallsRuneRitual {
 
   private restoreBrokenRitualCrystal(
     carry: RitualCrystalCarry,
-  ): { restored: boolean; consumedShards: number } {
+    duration: number,
+  ): RitualCrystalRestorationResult {
     const rune = this.getRuneForCarry(carry);
     const decoy = this.getDecoyForCarry(carry);
     if (!(rune?.broken ?? decoy?.broken ?? false)) {
@@ -2554,6 +2760,11 @@ export class FallsRuneRitual {
     );
     this.host.cancelKickableHold(carry.kickable);
     carry.object.position.copy(restoreCenter);
+    carry.restorationAge = 0;
+    carry.restorationDuration = this.host.isReducedMotion() ? 0 : duration;
+    carry.object.scale.setScalar(
+      carry.restorationDuration > 0 ? 0.04 : 1,
+    );
     carry.kickable.enabled = true;
     carry.kickable.velocity.set(0, 0, 0);
     carry.kickable.kickCooldown = 0.2;
@@ -2580,7 +2791,7 @@ export class FallsRuneRitual {
       decoy.facets.material.emissiveIntensity = 0.62;
       decoy.inner.material.opacity = 0.18;
       decoy.aura.material.opacity = 0.04;
-      decoy.groundGlow.material.opacity = 0.075;
+      decoy.groundGlow.material.opacity = 0.2;
     }
 
     const restoreSocket = carry.shatteredAtSocket;
@@ -2604,7 +2815,6 @@ export class FallsRuneRitual {
       }
     }
 
-    if (consumedShards > 0) this.host.settleFlyingFishSchools();
     this.syncRitualSocketPlacementStates();
     this.syncRuneCrystalLocks();
     this.updateRuneInteractionLabels();
@@ -2641,6 +2851,9 @@ export class FallsRuneRitual {
       carry.socketedAt = null;
       carry.shatteredAtSocket = null;
       carry.impactCooldownUntil = 0;
+      carry.restorationAge = 0;
+      carry.restorationDuration = 0;
+      carry.object.scale.setScalar(1);
     }
     for (const crystal of this.ritualDecoys.values()) {
       changed ||= crystal.hits > 0 || crystal.broken;
@@ -2672,7 +2885,7 @@ export class FallsRuneRitual {
       crystal.facets.material.emissiveIntensity = 0.62;
       crystal.inner.material.opacity = 0.18;
       crystal.aura.material.opacity = 0.04;
-      crystal.groundGlow.material.opacity = 0.075;
+      crystal.groundGlow.material.opacity = 0.2;
     }
     if (!preserveSolvedRitual) {
       for (const rune of this.runeStones.values()) {
@@ -2766,7 +2979,6 @@ export class FallsRuneRitual {
       socket.symbolMaterial.color
         .copy(socket.dormantColor)
         .lerp(socket.color, socket.reveal);
-
       const growthTarget = rune?.placed && !rune.broken ? 1 : 0;
       const growthFollow = this.host.isReducedMotion()
         ? 1
@@ -2776,8 +2988,13 @@ export class FallsRuneRitual {
         growthTarget,
         growthFollow,
       );
-      socket.roots.visible = socket.growth > 0.003;
-      if (!socket.roots.visible) continue;
+      const rootsActive = socket.growth > 0.003;
+      socket.roots.visible =
+        rootsActive || this.socketRootWarmupFrames > 0;
+      socket.roots.count = rootsActive
+        ? socket.rootShards.length
+        : 0;
+      if (!rootsActive) continue;
 
       for (const [index, root] of socket.rootShards.entries()) {
         const staggeredGrowth = THREE.MathUtils.clamp(
@@ -2811,6 +3028,9 @@ export class FallsRuneRitual {
         socket.reveal * 0.88 +
         Number(rune?.activated ?? false) * 0.46 +
         runePulse * 1.15;
+    }
+    if (this.socketRootWarmupFrames > 0) {
+      this.socketRootWarmupFrames -= 1;
     }
   }
 
@@ -2879,10 +3099,14 @@ export class FallsRuneRitual {
       carry.shadowRing.position.y = socketTop + 0.002;
     }
 
-    const liftScale = 1 - Math.min(0.25, liftedHeight * 0.12);
+    const restorationScale = Math.min(1, carry.object.scale.x);
+    const liftScale =
+      (1 - Math.min(0.25, liftedHeight * 0.12)) * restorationScale;
     carry.shadow.scale.set(liftScale, liftScale, 1);
     carry.shadow.material.opacity =
-      0.34 * (1 - Math.min(0.72, liftedHeight * 0.2));
+      0.34 *
+      restorationScale *
+      (1 - Math.min(0.72, liftedHeight * 0.2));
     const ringPulse =
       socketProximity > 0 && !this.host.isReducedMotion()
         ? (Math.sin(this.host.getElapsed() * 7.5) + 1) * 0.04
@@ -2890,16 +3114,210 @@ export class FallsRuneRitual {
     const ringScale = liftScale * (1 + socketProximity * 0.3 + ringPulse);
     carry.shadowRing.scale.set(ringScale, ringScale, 1);
     carry.shadowRing.material.opacity =
-      carry.socketedAt !== null
+      restorationScale *
+      (carry.socketedAt !== null
         ? 0.14
-        : 0.2 + socketProximity * 0.52;
+        : 0.2 + socketProximity * 0.52);
+  }
+
+  private updateRitualCrystalRestoration(
+    carry: RitualCrystalCarry,
+    delta: number,
+  ): void {
+    if (carry.restorationDuration <= 0) return;
+    carry.restorationAge = Math.min(
+      carry.restorationDuration,
+      carry.restorationAge + delta,
+    );
+    const progress = carry.restorationAge / carry.restorationDuration;
+    const growth = THREE.MathUtils.smoothstep(progress, 0, 1);
+    const resonance = Math.sin(progress * Math.PI) * 0.08;
+    carry.object.scale.setScalar(
+      THREE.MathUtils.lerp(0.04, 1, growth) * (1 + resonance),
+    );
+    if (progress < 1) return;
+    carry.object.scale.setScalar(1);
+    carry.restorationAge = 0;
+    carry.restorationDuration = 0;
+  }
+
+  private selectRitualLightTarget(
+    slotIndex: number,
+    ambientSlotCount: number,
+  ): RitualCrystalCarry | null {
+    const previousTarget = this.ritualLightSlots[slotIndex]?.target ?? null;
+    const previousTargetIndex = previousTarget
+      ? this.ritualCrystals.indexOf(previousTarget)
+      : -1;
+    if (
+      previousTarget &&
+      previousTargetIndex >= 0 &&
+      previousTargetIndex % ambientSlotCount === slotIndex &&
+      !this.isRitualCrystalBroken(previousTarget) &&
+      previousTarget.object.visible
+    ) {
+      return previousTarget;
+    }
+
+    // Distribute the three named crystals across the available tier slots,
+    // then pair decoys with them. A slot retains its intact target until that
+    // crystal disappears or breaks; player movement and crystal crossings must
+    // never reshuffle coloured lights between otherwise unchanged clusters.
+    for (
+      let crystalIndex = slotIndex;
+      crystalIndex < this.ritualCrystals.length;
+      crystalIndex += ambientSlotCount
+    ) {
+      const carry = this.ritualCrystals[crystalIndex];
+      if (
+        !carry ||
+        this.isRitualCrystalBroken(carry) ||
+        !carry.object.visible
+      ) {
+        continue;
+      }
+      return carry;
+    }
+    return null;
+  }
+
+  private updateRitualAmbientLight(
+    slot: RitualLightSlot,
+    target: RitualCrystalCarry | null,
+    qualityScale: number,
+    delta: number,
+  ): void {
+    const light = slot.light;
+    slot.target = target;
+    light.distance = 5.8;
+    const intensityFollow = this.host.isReducedMotion()
+      ? 1
+      : 1 - Math.exp(-delta * 5.2);
+    if (!target) {
+      light.intensity = THREE.MathUtils.lerp(
+        light.intensity,
+        0,
+        intensityFollow,
+      );
+      return;
+    }
+
+    const seated = target.socketedAt !== null;
+    const targetIntensity =
+      qualityScale *
+      ((seated ? 2.15 : 1.8) +
+        Math.sin(
+          this.host.getElapsed() * 2.15 +
+            target.origin.x * 0.37 +
+            target.origin.z * 0.19,
+        ) *
+          (this.host.isReducedMotion()
+            ? seated
+              ? 0.06
+              : 0.05
+            : seated
+              ? 0.24
+              : 0.18));
+    const targetY =
+      target.object.position.y + 0.82 * Math.max(0.04, target.object.scale.y);
+    const positionFollow =
+      this.host.isReducedMotion() || light.intensity < 0.02
+        ? 1
+        : 1 - Math.exp(-delta * 8.5);
+    light.position.x = THREE.MathUtils.lerp(
+      light.position.x,
+      target.object.position.x,
+      positionFollow,
+    );
+    light.position.y = THREE.MathUtils.lerp(
+      light.position.y,
+      targetY,
+      positionFollow,
+    );
+    light.position.z = THREE.MathUtils.lerp(
+      light.position.z,
+      target.object.position.z,
+      positionFollow,
+    );
+    light.color.lerp(target.color, positionFollow);
+    light.intensity = THREE.MathUtils.lerp(
+      light.intensity,
+      targetIntensity,
+      intensityFollow,
+    );
+  }
+
+  private updateRitualLights(delta: number): void {
+    const quality = this.host.getQuality();
+    const budget = getFallsPointLightBudget(quality);
+    const tinkleLight = this.ritualLightSlots[0]?.light;
+    this.runeTinkleAge = Math.min(2, this.runeTinkleAge + delta);
+    const tinkleProgress = Math.min(1, this.runeTinkleAge / 0.62);
+    const tinkleActive =
+      Boolean(tinkleLight) &&
+      this.runeTinkleLightLeased &&
+      !this.host.isReducedMotion() &&
+      tinkleProgress < 1;
+
+    if (tinkleLight) {
+      if (tinkleActive) {
+        const fade = 1 - tinkleProgress;
+        tinkleLight.distance = 4.8;
+        tinkleLight.intensity =
+          this.runeTinkleBaseIntensity +
+          this.runeTinklePeakIntensity * fade * fade;
+      } else if (this.runeTinkleLightLeased) {
+        // End the lease before returning this slot to ambient tracking so the
+        // old tinkle peak does not bleed into its next crystal assignment.
+        tinkleLight.distance = 5.8;
+        tinkleLight.intensity = this.runeTinkleBaseIntensity;
+        this.runeTinkleLightLeased = false;
+      }
+    }
+
+    const qualityScale = quality === "medium" ? 0.72 : 1;
+    for (
+      let index = 0;
+      index < budget.ritualAmbientSlots;
+      index += 1
+    ) {
+      if (index === 0 && tinkleActive) continue;
+      const slot = this.ritualLightSlots[index];
+      if (!slot) continue;
+      this.updateRitualAmbientLight(
+        slot,
+        this.selectRitualLightTarget(
+          index,
+          budget.ritualAmbientSlots,
+        ),
+        qualityScale,
+        delta,
+      );
+    }
+
+    for (
+      let index = budget.ritualAmbientSlots;
+      index < this.ritualLightSlots.length;
+      index += 1
+    ) {
+      if (index === 0 && tinkleActive) continue;
+      const slot = this.ritualLightSlots[index];
+      if (!slot) continue;
+      slot.target = null;
+      slot.light.distance = 5.8;
+      slot.light.intensity = 0;
+    }
   }
 
   private updateRuneEffects(delta: number): void {
     this.updateRuneSocketEffects(delta);
     for (const carry of this.ritualCrystals) {
+      this.updateRitualCrystalRestoration(carry, delta);
       this.updateRitualCrystalShadow(carry);
     }
+    this.updateRitualLights(delta);
+    const reducedMotion = this.host.isReducedMotion();
+    const heldKickable = this.host.getHeldKickable();
     for (const rune of this.runeStones.values()) {
       const interactionTarget = this.getRitualCrystalTargetObject(
         rune.carry,
@@ -2909,24 +3327,56 @@ export class FallsRuneRitual {
         interactionTarget.position.x,
         interactionTarget.position.z,
       );
+      const pulseWasActive = rune.pulseAge < 0.72;
+      const breakAnimationWasActive =
+        rune.broken && rune.breakAge < 1.35;
       rune.pulseAge = Math.min(2, rune.pulseAge + delta);
+      if (!reducedMotion) rune.ambientRotation += delta;
+      let shardMotionActive = false;
       if (rune.broken) {
         rune.breakAge = Math.min(2, rune.breakAge + delta);
         const spinScale = Math.max(0, 1 - rune.breakAge / 1.35);
         for (const shard of rune.shards) {
           if (
             !shard.proxy ||
-            !shard.kickable?.enabled ||
-            shard.kickable === this.host.getHeldKickable()
+            !shard.kickable?.enabled
           ) {
             continue;
           }
+          shardMotionActive ||= (
+            shard.kickable === heldKickable ||
+            shard.kickable.velocity.lengthSq() > 0.0004 ||
+            shard.proxy.position.distanceToSquared(
+              shard.lastMatrixPosition,
+            ) > 0.000001 ||
+            Math.abs(
+              shard.proxy.rotation.x -
+                shard.lastMatrixRotation.x,
+            ) > 0.0001 ||
+            Math.abs(
+              shard.proxy.rotation.y -
+                shard.lastMatrixRotation.y,
+            ) > 0.0001 ||
+            Math.abs(
+              shard.proxy.rotation.z -
+                shard.lastMatrixRotation.z,
+            ) > 0.0001
+          );
+          if (shard.kickable === heldKickable) continue;
           shard.proxy.rotation.x += shard.spin.x * delta * spinScale;
           shard.proxy.rotation.y += shard.spin.y * delta * spinScale;
           shard.proxy.rotation.z += shard.spin.z * delta * spinScale;
         }
       }
-      this.updateRuneCrystalMatrices(rune);
+      if (
+        !reducedMotion ||
+        rune.matrixDirty ||
+        pulseWasActive ||
+        breakAnimationWasActive ||
+        shardMotionActive
+      ) {
+        this.updateRuneCrystalMatrices(rune);
+      }
     }
 
     for (const crystal of this.ritualDecoys.values()) {
@@ -2964,7 +3414,7 @@ export class FallsRuneRitual {
       crystal.facets.material.emissiveIntensity = 0.62 + pulse * 2.1;
       crystal.inner.material.opacity = 0.18 + pulse * 0.28;
       crystal.aura.material.opacity = 0.04 + pulse * 0.11;
-      crystal.groundGlow.material.opacity = 0.075 + pulse * 0.16;
+      crystal.groundGlow.material.opacity = 0.2 + pulse * 0.2;
       crystal.cracks.visible = crystal.hits >= 3;
     }
 
@@ -3002,14 +3452,6 @@ export class FallsRuneRitual {
       }
     }
 
-    if (this.runeTinkleLight) {
-      this.runeTinkleAge = Math.min(2, this.runeTinkleAge + delta);
-      const progress = Math.min(1, this.runeTinkleAge / 0.62);
-      const fade = Math.max(0, 1 - progress);
-      this.runeTinkleLight.intensity = this.host.isReducedMotion()
-        ? 0
-        : this.runeTinklePeakIntensity * fade * fade;
-    }
     this.updateRuneDiagnosticTrace(delta);
   }
 
@@ -3061,17 +3503,56 @@ export class FallsRuneRitual {
       trace.packet.rotation.x += delta * 2.3;
     }
 
+    const targetCount = trace.targets.length;
+    const restorationDuration = Math.max(
+      this.host.isReducedMotion() ? 0.18 : 0.5,
+      (travelDuration / targetCount) * 0.92,
+    );
     while (
-      trace.nextTargetIndex < trace.targets.length &&
-      progress >= (trace.nextTargetIndex + 1) / trace.targets.length
+      trace.nextRestorationIndex < targetCount &&
+      progress >= (trace.nextRestorationIndex + 1) / targetCount
     ) {
-      const carry = trace.targets[trace.nextTargetIndex];
+      const restorationIndex = trace.nextRestorationIndex;
+      const carry = trace.targets[restorationIndex];
       if (!carry) break;
-      const wasBroken = this.isRitualCrystalBroken(carry);
-      const restoration = wasBroken
-        ? this.restoreBrokenRitualCrystal(carry)
-        : { restored: false, consumedShards: 0 };
-      this.triggerRitualCrystalTinkle(carry, wasBroken ? 1.45 : 0.92);
+      if (this.isRitualCrystalBroken(carry)) {
+        const rune = this.getRuneForCarry(carry);
+        const decoy = this.getDecoyForCarry(carry);
+        const color = rune?.color ?? decoy?.color;
+        const restoration = this.restoreBrokenRitualCrystal(
+          carry,
+          restorationDuration,
+        );
+        trace.restorations[restorationIndex] = restoration;
+        if (color && restoration.consumedShards > 0) {
+          const magicTarget = carry.object.position.clone();
+          magicTarget.y += 0.78;
+          this.host.recallFlyingFishMagic(
+            magicTarget,
+            color,
+            restoration.consumedShards,
+            restorationDuration,
+          );
+        }
+      }
+      trace.nextRestorationIndex += 1;
+    }
+
+    while (
+      trace.nextTargetIndex < targetCount &&
+      progress >= (trace.nextTargetIndex + 1) / targetCount
+    ) {
+      const targetIndex = trace.nextTargetIndex;
+      const carry = trace.targets[targetIndex];
+      if (!carry) break;
+      const restoration = trace.restorations[targetIndex] ?? {
+        restored: false,
+        consumedShards: 0,
+      };
+      this.triggerRitualCrystalTinkle(
+        carry,
+        restoration.restored ? 1.45 : 0.92,
+      );
       if (restoration.restored) {
         trace.path.material.color.setHex(this.host.colors.coral);
         const descriptor =
@@ -3081,7 +3562,7 @@ export class FallsRuneRitual {
         this.host.onStatus(
           `${descriptor ? `The trace reaches ${descriptor.title}` : "The trace finds an unnamed cluster"}. Its scattered facets pull together behind the packet.${
             restoration.consumedShards > 0
-              ? " Borrowed colour rains from the flying shoal."
+              ? " Borrowed colour streams home from the flying shoal."
               : ""
           }`,
         );
@@ -3092,6 +3573,7 @@ export class FallsRuneRitual {
     if (trace.age >= trace.duration) {
       trace.active = false;
       trace.targets = [];
+      trace.restorations = [];
       trace.path.visible = false;
       trace.packet.visible = false;
       trace.path.geometry.setDrawRange(0, 0);
@@ -3172,9 +3654,13 @@ export class FallsRuneRitual {
     if (id !== expected) {
       for (const candidate of this.runeStones.values()) {
         candidate.activated = false;
+        candidate.matrixDirty = true;
       }
       this.runeProgress = id === "moon" ? 1 : 0;
-      if (id === "moon") rune.activated = true;
+      if (id === "moon") {
+        rune.activated = true;
+        rune.matrixDirty = true;
+      }
       this.syncRuneCrystalLocks();
       this.updateRuneInteractionLabels();
       this.host.onStatus(
@@ -3188,6 +3674,7 @@ export class FallsRuneRitual {
     }
 
     rune.activated = true;
+    rune.matrixDirty = true;
     this.runeProgress += 1;
     this.syncRuneCrystalLocks();
     this.updateRuneInteractionLabels();

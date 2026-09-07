@@ -1,9 +1,11 @@
 import * as THREE from "three";
 
 import type {
+  QualityTier,
   WorldStatusOptions,
   ZoneId,
 } from "../world/WorldContracts";
+import { PortalThresholdCharge } from "./PortalThresholdCharge";
 
 interface PortalAnimatedItem {
   object: THREE.Object3D;
@@ -32,6 +34,7 @@ export interface PortalNetworkHost {
     green: THREE.Material;
     parchment: THREE.Material;
     portalGlyph: THREE.Material;
+    softShadow: THREE.Material;
     stone: THREE.Material;
     violet: THREE.Material;
   }>;
@@ -68,6 +71,7 @@ export interface PortalNetworkHost {
   isPlayerLocked: () => boolean;
   isWorldCollapseActive: () => boolean;
   isReducedMotion: () => boolean;
+  getQuality: () => QualityTier;
 }
 
 export interface PortalHandle {
@@ -75,13 +79,21 @@ export interface PortalHandle {
   readonly destination: ZoneId;
 }
 
+export interface PortalPointerHit {
+  readonly portal: PortalHandle;
+  readonly distance: number;
+}
+
 interface PortalState extends PortalHandle {
   core: THREE.Object3D;
+  pointerTarget: THREE.Object3D;
+  pointerRadius: number;
   milestones: PortalMilestoneDisplay;
   action: () => void | Promise<void>;
   dwell: number;
   announced: boolean;
   triggered: boolean;
+  thresholdCharge: PortalThresholdCharge | null;
   chargeMode?: "pulse" | "collapse";
   lockMessage?: string;
 }
@@ -121,6 +133,8 @@ export interface PortalApertureOptions {
   x: number;
   z: number;
   core: THREE.Object3D;
+  pointerTarget?: THREE.Object3D;
+  pointerRadius?: number;
   destination: ZoneId;
   milestoneParent: THREE.Object3D;
   signParent: THREE.Group;
@@ -179,6 +193,9 @@ function createPortalMilestoneCrystalGeometry(
 
 export class PortalNetwork {
   private readonly portals: PortalState[] = [];
+  private readonly pointerHits: THREE.Intersection[] = [];
+  private readonly pointerSphere = new THREE.Sphere();
+  private readonly pointerSphereHit = new THREE.Vector3();
   private readonly restScale = new THREE.Vector3(1, 1, 1);
   private readonly dormantMilestoneShade = new THREE.Color(0x172227);
   private readonly zoneMilestoneColors: Readonly<
@@ -235,6 +252,14 @@ export class PortalNetwork {
     this.updatePortalMilestones(delta);
   }
 
+  hasActiveMotion(): boolean {
+    return this.portals.some(
+      (portal) =>
+        portal.dwell > 0 ||
+        (portal.thresholdCharge?.isActive ?? false),
+    );
+  }
+
   findByDestination(destination: ZoneId): PortalHandle | null {
     return (
       this.portals.find((portal) => portal.destination === destination) ??
@@ -257,6 +282,43 @@ export class PortalNetwork {
     );
   }
 
+  findPointed(raycaster: THREE.Raycaster): PortalPointerHit | null {
+    let pointed: PortalState | null = null;
+    let closestDistance = Number.POSITIVE_INFINITY;
+    for (const portal of this.portals) {
+      this.pointerHits.length = 0;
+      raycaster.intersectObject(
+        portal.pointerTarget,
+        true,
+        this.pointerHits,
+      );
+      let distance =
+        this.pointerHits[0]?.distance ??
+        Number.POSITIVE_INFINITY;
+      portal.core.getWorldPosition(this.pointerSphere.center);
+      this.pointerSphere.radius = portal.pointerRadius;
+      if (
+        raycaster.ray.intersectSphere(
+          this.pointerSphere,
+          this.pointerSphereHit,
+        )
+      ) {
+        distance = Math.min(
+          distance,
+          raycaster.ray.origin.distanceTo(
+            this.pointerSphereHit,
+          ),
+        );
+      }
+      if (distance >= closestDistance) continue;
+      pointed = portal;
+      closestDistance = distance;
+    }
+    return pointed
+      ? { portal: pointed, distance: closestDistance }
+      : null;
+  }
+
   pulse(portal: PortalHandle, scale = 1.28): void {
     const state = this.portals.find((candidate) => candidate === portal);
     state?.core.scale.setScalar(scale);
@@ -270,6 +332,13 @@ export class PortalNetwork {
   }
 
   registerAperture(options: PortalApertureOptions): PortalHandle {
+    return this.registerPortal(options, null);
+  }
+
+  private registerPortal(
+    options: PortalApertureOptions,
+    thresholdCharge: PortalThresholdCharge | null,
+  ): PortalHandle {
     const action =
       options.action ?? (() => this.host.travelTo(options.destination));
     const milestones = this.createPortalMilestoneDisplay(
@@ -287,12 +356,15 @@ export class PortalNetwork {
     const portal: PortalState = {
       position: new THREE.Vector3(options.x, 0, options.z),
       core: options.core,
+      pointerTarget: options.pointerTarget ?? options.core,
+      pointerRadius: options.pointerRadius ?? 1.35,
       destination: options.destination,
       milestones,
       action,
       dwell: 0,
       announced: false,
       triggered: false,
+      thresholdCharge,
       chargeMode: options.chargeMode,
       lockMessage: options.lockMessage,
     };
@@ -325,7 +397,28 @@ export class PortalNetwork {
   }
 
   private updateThresholds(delta: number): void {
-    if (this.host.isWorldCollapseActive()) return;
+    const elapsed = this.host.getElapsed();
+    const reducedMotion = this.host.isReducedMotion();
+    const quality = this.host.getQuality();
+    if (this.host.isWorldCollapseActive()) {
+      for (const portal of this.portals) {
+        portal.dwell = 0;
+        portal.announced = false;
+        portal.triggered = false;
+        portal.core.scale.lerp(
+          this.restScale,
+          Math.min(1, delta * 8),
+        );
+        portal.thresholdCharge?.update(
+          0,
+          delta,
+          elapsed,
+          reducedMotion,
+          quality,
+        );
+      }
+      return;
+    }
     const playerPosition = this.host.getPlayerPosition();
     for (const portal of this.portals) {
       const dx = portal.position.x - playerPosition.x;
@@ -347,17 +440,30 @@ export class PortalNetwork {
           this.restScale,
           Math.min(1, delta * 8),
         );
+        portal.thresholdCharge?.update(
+          0,
+          delta,
+          elapsed,
+          reducedMotion,
+          quality,
+        );
         continue;
       }
 
       portal.dwell += delta;
       const charge = Math.min(1, portal.dwell / portalDwellDuration);
-      const elapsed = this.host.getElapsed();
       const pulse =
         portal.chargeMode === "collapse"
           ? 1 - charge * 0.42 + Math.sin(elapsed * 9) * 0.008
           : 1 + charge * 0.12 + Math.sin(elapsed * 9) * 0.015;
       portal.core.scale.setScalar(pulse);
+      portal.thresholdCharge?.update(
+        charge,
+        delta,
+        elapsed,
+        reducedMotion,
+        quality,
+      );
       if (portal.dwell > 0.42 && !portal.announced) {
         portal.announced = true;
         this.host.onStatus(
@@ -513,7 +619,7 @@ export class PortalNetwork {
         vertexColors: true,
         transparent: true,
         opacity: 0.18,
-        depthTest: false,
+        depthTest: true,
         depthWrite: false,
         side: THREE.BackSide,
         blending: THREE.AdditiveBlending,
@@ -746,7 +852,9 @@ export class PortalNetwork {
     );
     ring.name = `portal-stone-ring-${destination}`;
     ring.position.y = 2.05;
-    ring.castShadow = true;
+    // Thresholds sit high at the island rim; their coarse shadow silhouettes
+    // stretched across most of the playable floor and obscured surface detail.
+    ring.castShadow = false;
     ring.receiveShadow = true;
     group.add(ring);
 
@@ -776,7 +884,7 @@ export class PortalNetwork {
         this.host.materials.stone,
       );
       base.position.set(side * 1.42, 0.65, 0);
-      base.castShadow = true;
+      base.castShadow = false;
       base.receiveShadow = true;
       group.add(base);
     }
@@ -788,6 +896,19 @@ export class PortalNetwork {
     step.position.set(0, 0.08, 0.45);
     step.receiveShadow = true;
     group.add(step);
+
+    const contactShadow = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      this.host.materials.softShadow,
+    );
+    contactShadow.name = `portal-soft-contact-shadow-${destination}`;
+    contactShadow.position.set(0.28, 0.145, -0.18);
+    contactShadow.rotation.x = -Math.PI / 2;
+    contactShadow.scale.set(4.35, 1.72, 1);
+    contactShadow.castShadow = false;
+    contactShadow.receiveShadow = false;
+    contactShadow.renderOrder = 1;
+    group.add(contactShadow);
 
     parent.add(group);
     const currentZone = this.host.getCurrentZone();
@@ -809,25 +930,37 @@ export class PortalNetwork {
       rotationSpeed: 0.42,
       rotationAxis: "z",
     });
-    this.registerAperture({
-      x,
-      z,
-      core,
-      destination,
-      milestoneParent: group,
-      signParent: parent,
-      rotation: group.rotation.y,
-      progressZone,
-      // Both faces of a threshold teach the same world-owned fragment.
-      // Return portals therefore mirror the world being left, not Field.
-      fragmentZone: progressZone,
-      orbiting: false,
-      action,
-      interaction: {
-        id: `portal-${label}`,
-        label,
-        radius: 2.65,
-      },
+    const thresholdCharge = new PortalThresholdCharge({
+      parent: group,
+      swirl,
+      color,
+      centerY: 2.05,
+      phase: Math.abs(x * 0.19 + z * 0.27),
     });
+    this.registerPortal(
+      {
+        x,
+        z,
+        core,
+        pointerTarget: group,
+        pointerRadius: 2.2,
+        destination,
+        milestoneParent: group,
+        signParent: parent,
+        rotation: group.rotation.y,
+        progressZone,
+        // Both faces of a threshold teach the same world-owned fragment.
+        // Return portals therefore mirror the world being left, not Field.
+        fragmentZone: progressZone,
+        orbiting: false,
+        action,
+        interaction: {
+          id: `portal-${label}`,
+          label,
+          radius: 2.65,
+        },
+      },
+      thresholdCharge,
+    );
   }
 }

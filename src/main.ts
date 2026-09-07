@@ -1,4 +1,5 @@
 import "./styles.css";
+import { TerminalRequests } from "./shell/TerminalRequests";
 
 import type {
   GameMetrics,
@@ -47,6 +48,7 @@ import {
   resolveTerminalCommandName,
   terminalCommandNames,
 } from "./shell/TerminalCommands";
+import { TerminalWorm } from "./shell/TerminalWorm";
 import {
   getLocalStorage,
   getSessionStorage,
@@ -94,6 +96,9 @@ const touchInteract = byId<HTMLButtonElement>("touch-interact");
 const touchInteractLabel = byId<HTMLElement>("touch-interact-label");
 const joystick = byId<HTMLElement>("joystick");
 const joystickKnob = byId<HTMLElement>("joystick-knob");
+const touchDirectionButtons = Array.from(
+  joystick.querySelectorAll<HTMLButtonElement>(".touch-direction"),
+);
 const terminalPanel = byId<HTMLDialogElement>("terminal-panel");
 const terminalTitle = byId<HTMLElement>("terminal-title");
 const terminalOutput = byId<HTMLElement>("terminal-output");
@@ -149,6 +154,22 @@ const dialogs = {
 const PORTFOLIO_HASH = "#portfolio";
 const PORTFOLIO_HISTORY_KEY = "portfolioOverlay";
 let synchronizingPortfolioRoute = false;
+let portfolioPrepared = false;
+let portfolioPreparationIdleHandle: number | null = null;
+let portfolioPreparationTimer = 0;
+let pendingPortfolioRevealSource: PortfolioRevealSource = "standard";
+
+type IdleCallbackWindow = Window & {
+  requestIdleCallback?: (
+    callback: () => void,
+    options?: { timeout: number },
+  ) => number;
+  cancelIdleCallback?: (handle: number) => void;
+};
+
+const idleCallbackWindow = window as IdleCallbackWindow;
+const portfolioPortrait =
+  portfolioDialog.querySelector<HTMLImageElement>(".portfolio-intro img");
 
 type FolioTab = "journal" | "atlas" | "spells" | "settings";
 
@@ -425,6 +446,7 @@ let historyIndex = 0;
 let worldJournalSequence = 0;
 const worldJournal: WorldJournalEntry[] = [];
 let joystickPointer: number | null = null;
+let touchDirectionPulseTimer = 0;
 let spellPointerId: number | null = null;
 let fieldMenuPulseTimer = 0;
 let toastTimer = 0;
@@ -437,6 +459,14 @@ let turtleMediaHideTimer = 0;
 let voidRideHideTimer = 0;
 let turtleMediaShowFrame = 0;
 let terminalCloseTimer = 0;
+const terminalRequests = new TerminalRequests();
+
+function hasRecoveredGridServerPayload(): boolean {
+  return (
+    game?.hasGridServerPayload() === true ||
+    achievementLedger.hasUnlocked("SNEAKERNET")
+  );
+}
 let terminalFocusFrame = 0;
 let terminalFlushFrame = 0;
 let terminalReturnFocus: HTMLElement | null = null;
@@ -903,7 +933,7 @@ function showWorldToast(
     speaker.textContent = options.speaker ?? "Unknown signal";
     const quote = document.createElement("q");
     quote.className = "world-toast-quote";
-    quote.textContent = message;
+    renderWorldSpeechQuote(quote, message, options.monospaceTerms);
     worldToast.replaceChildren(speaker, quote);
   } else if (kind === "achievement") {
     const label = document.createElement("span");
@@ -937,6 +967,48 @@ function showWorldToast(
   }, visibleDuration);
 }
 
+function renderWorldSpeechQuote(
+  quote: HTMLElement,
+  message: string,
+  monospaceTerms: readonly string[] | undefined,
+): void {
+  const terms = monospaceTerms?.filter((term) => term.length > 0) ?? [];
+  if (terms.length === 0) {
+    quote.textContent = message;
+    return;
+  }
+
+  const content = document.createDocumentFragment();
+  let cursor = 0;
+  while (cursor < message.length) {
+    let nextIndex = -1;
+    let nextTerm = "";
+    for (const term of terms) {
+      const candidateIndex = message.indexOf(term, cursor);
+      if (
+        candidateIndex >= 0 &&
+        (nextIndex < 0 || candidateIndex < nextIndex)
+      ) {
+        nextIndex = candidateIndex;
+        nextTerm = term;
+      }
+    }
+    if (nextIndex < 0) {
+      content.append(message.slice(cursor));
+      break;
+    }
+    if (nextIndex > cursor) {
+      content.append(message.slice(cursor, nextIndex));
+    }
+    const monospaceTerm = document.createElement("span");
+    monospaceTerm.className = "world-toast-monospace";
+    monospaceTerm.textContent = nextTerm;
+    content.append(monospaceTerm);
+    cursor = nextIndex + nextTerm.length;
+  }
+  quote.replaceChildren(content);
+}
+
 function showParallelWorldDialogue(
   message: string,
   options: WorldStatusOptions,
@@ -948,7 +1020,7 @@ function showParallelWorldDialogue(
   speaker.textContent = options.speaker ?? "Unknown signal";
   const quote = document.createElement("q");
   quote.className = "world-toast-quote";
-  quote.textContent = message;
+  renderWorldSpeechQuote(quote, message, options.monospaceTerms);
   worldDialogue.dataset.kind = "speech";
   worldDialogue.replaceChildren(speaker, quote);
   worldDialogue.hidden = false;
@@ -1040,9 +1112,14 @@ function setTurtleMediaActive(active: boolean): void {
 
 function updateMetrics(metrics: GameMetrics): void {
   metricFps.textContent = `${metrics.fps} FPS`;
+  metricFps.title =
+    `Frame time over the last window: ${metrics.p95FrameMs} ms p95 · ` +
+    `${metrics.worstFrameMs} ms worst`;
   metricDraws.textContent = `${metrics.drawCalls} calls`;
   metricDraws.title = `${metrics.triangles.toLocaleString()} rendered triangles`;
-  folioFpsValue.textContent = `${metrics.fps} FPS`;
+  folioFpsValue.textContent =
+    `${metrics.fps} FPS · ${metrics.p95FrameMs} MS P95 · ` +
+    `${metrics.worstFrameMs} MS WORST`;
   folioDrawsValue.textContent = `${metrics.drawCalls} DRAW CALLS · ${metrics.triangles.toLocaleString()} TRI`;
 }
 
@@ -1083,6 +1160,7 @@ function syncVisualViewport(): void {
 function closeTerminal(
   focus: "return" | "world" = "return",
 ): void {
+  terminalRequests.invalidate();
   window.clearTimeout(terminalCloseTimer);
   terminalCloseTimer = 0;
   window.cancelAnimationFrame(terminalFocusFrame);
@@ -1090,6 +1168,7 @@ function closeTerminal(
   if (!terminalPanel.open) return;
   terminalCloseFocus = focus;
   terminalPanel.close();
+  terminalWorm.stop(undefined, false);
 }
 
 function scheduleTerminalClose(delay: number): void {
@@ -1110,7 +1189,13 @@ function scheduleTerminalFocus(): void {
   terminalFocusFrame = window.requestAnimationFrame(() => {
     terminalFocusFrame = 0;
     if (terminalPanel.open) {
-      terminalInput.focus({ preventScroll: true });
+      if (terminalForm.hidden) {
+        terminalOutput
+          .querySelector<HTMLElement>(".terminal-worm")
+          ?.focus({ preventScroll: true });
+      } else {
+        terminalInput.focus({ preventScroll: true });
+      }
     }
   });
 }
@@ -1121,6 +1206,9 @@ function openTerminal(): void {
     scheduleTerminalFocus();
     return;
   }
+  terminalRequests.invalidate();
+  // A native close event may still be queued when this session reopens.
+  terminalWorm.stop(undefined, false);
   window.clearTimeout(terminalCloseTimer);
   terminalCloseTimer = 0;
   const focusedElement =
@@ -1169,6 +1257,76 @@ function closeDialogs(): void {
   }
 }
 
+function cancelPortfolioPreparation(): void {
+  if (portfolioPreparationIdleHandle !== null) {
+    idleCallbackWindow.cancelIdleCallback?.(portfolioPreparationIdleHandle);
+    portfolioPreparationIdleHandle = null;
+  }
+  window.clearTimeout(portfolioPreparationTimer);
+  portfolioPreparationTimer = 0;
+}
+
+function preparePortfolioPresentation(): void {
+  portfolioPreparationIdleHandle = null;
+  portfolioPreparationTimer = 0;
+  if (portfolioPrepared || portfolioDialog.open) return;
+
+  portfolioDialog.dataset.revealSource = pendingPortfolioRevealSource;
+  portfolioDialog.dataset.prepared = "true";
+  portfolioDialog.inert = true;
+  portfolioDialog.setAttribute("aria-hidden", "true");
+  portfolioDialog.scrollTop = 0;
+
+  // Decoding and laying out the large semantic portfolio for the first time can
+  // otherwise land on the exact frame that the monument's beam reaches the
+  // player. The closed-dialog CSS keeps this warm layout inert and invisible.
+  if (portfolioPortrait) {
+    void portfolioPortrait.decode().catch(() => {
+      // A rejected speculative decode must not prevent normal image rendering.
+    });
+  }
+  portfolioDialog.getBoundingClientRect();
+  void portfolioDialog.scrollHeight;
+  portfolioPrepared = true;
+}
+
+function schedulePortfolioPreparation(
+  source: PortfolioRevealSource = "standard",
+  priority: "idle" | "cinematic" = "idle",
+): void {
+  if (source === "monument") {
+    pendingPortfolioRevealSource = source;
+  }
+  if (portfolioPrepared) {
+    if (!portfolioDialog.open) {
+      portfolioDialog.dataset.revealSource = pendingPortfolioRevealSource;
+    }
+    return;
+  }
+  if (portfolioDialog.open) return;
+
+  if (
+    priority === "idle" &&
+    (portfolioPreparationIdleHandle !== null ||
+      portfolioPreparationTimer !== 0)
+  ) {
+    return;
+  }
+
+  cancelPortfolioPreparation();
+  if (idleCallbackWindow.requestIdleCallback) {
+    portfolioPreparationIdleHandle =
+      idleCallbackWindow.requestIdleCallback(preparePortfolioPresentation, {
+        timeout: priority === "cinematic" ? 180 : 2400,
+      });
+    return;
+  }
+  portfolioPreparationTimer = window.setTimeout(
+    preparePortfolioPresentation,
+    priority === "cinematic" ? 80 : 900,
+  );
+}
+
 function openDialog(
   name: keyof typeof dialogs,
   revealSource: PortfolioRevealSource = "standard",
@@ -1180,12 +1338,16 @@ function openDialog(
   }
   const dialog = dialogs[name];
   if (dialog === portfolioDialog) {
+    cancelPortfolioPreparation();
+    pendingPortfolioRevealSource = revealSource;
     dialog.dataset.revealSource = revealSource;
+    dialog.inert = false;
+    dialog.removeAttribute("aria-hidden");
   }
   if (!dialog.open) {
-    dialog.scrollTop = 0;
+    if (dialog !== portfolioDialog) dialog.scrollTop = 0;
     dialog.showModal();
-    dialog.scrollTop = 0;
+    if (dialog !== portfolioDialog) dialog.scrollTop = 0;
   }
   syncGameInput();
 }
@@ -1214,6 +1376,19 @@ function openPortfolio(
     );
   }
   openDialog("portfolio", revealSource);
+}
+
+function revealPortfolioFromWorld(
+  revealSource: PortfolioRevealSource = "standard",
+): void {
+  if (revealSource !== "monument") {
+    openPortfolio(revealSource);
+    return;
+  }
+
+  // RuneAltar invokes this from inside the world update. Let that apex frame
+  // finish rendering before promoting the prepared dialog to the top layer.
+  window.requestAnimationFrame(() => openPortfolio(revealSource));
 }
 
 function clearPortfolioRoute(): void {
@@ -1268,6 +1443,14 @@ function closeOverlay(name: string): void {
   syncGameInput();
 }
 
+function trimTerminalOutput(): void {
+  let excess = terminalOutput.childElementCount - maximumTerminalLines;
+  while (excess > 0) {
+    terminalOutput.firstElementChild?.remove();
+    excess -= 1;
+  }
+}
+
 function flushTerminalOutput(): void {
   terminalFlushFrame = 0;
   if (pendingTerminalLines.length === 0) return;
@@ -1276,12 +1459,7 @@ function flushTerminalOutput(): void {
   for (const line of pendingTerminalLines) fragment.append(line);
   pendingTerminalLines.length = 0;
   terminalOutput.append(fragment);
-
-  let excess = terminalOutput.childElementCount - maximumTerminalLines;
-  while (excess > 0) {
-    terminalOutput.firstElementChild?.remove();
-    excess -= 1;
-  }
+  trimTerminalOutput();
   terminalOutput.scrollTop = terminalOutput.scrollHeight;
 }
 
@@ -1315,6 +1493,44 @@ function writeTerminal(
   }
   scheduleTerminalFlush();
 }
+
+function appendTerminalElement(element: HTMLElement): void {
+  window.cancelAnimationFrame(terminalFlushFrame);
+  terminalFlushFrame = 0;
+  flushTerminalOutput();
+  terminalOutput.append(element);
+  trimTerminalOutput();
+  terminalOutput.scrollTop = terminalOutput.scrollHeight;
+}
+
+const terminalWorm = new TerminalWorm({
+  appendElement: appendTerminalElement,
+  onActiveChange: (active) => {
+    terminalInput.value = "";
+    terminalInput.readOnly = active;
+    terminalForm.hidden = active;
+    if (active) {
+      terminalForm.dataset.mode = "worm";
+      terminalTitle.textContent =
+        `${terminalZoneLabels[terminalPhysicalZone]} terminal · C2 192.168.0.1`;
+      terminalInput.setAttribute(
+        "aria-label",
+        "C2 WORM game controls; use arrows or W A S D",
+      );
+    } else {
+      delete terminalForm.dataset.mode;
+      terminalInput.placeholder = "";
+      terminalInput.setAttribute("aria-label", "Terminal command");
+      updateTerminalChrome();
+    }
+    if (terminalPanel.open) scheduleTerminalFocus();
+  },
+  onExit: (message, tone) => {
+    writeTerminal(message, tone);
+  },
+  requestFocus: scheduleTerminalFocus,
+  isReducedMotion: () => worldPreferences.motion === "reduced",
+});
 
 async function ensureGame(destination: ZoneId | null = null): Promise<PortfolioGame> {
   if (!gamePromise && !game) {
@@ -1351,8 +1567,13 @@ async function ensureGame(destination: ZoneId | null = null): Promise<PortfolioG
         },
         onRequestMap: () => openFieldMenu("atlas"),
         onRequestTerminal: openTerminal,
+        onPreparePortfolio: (source) =>
+          schedulePortfolioPreparation(
+            source ?? "standard",
+            "cinematic",
+          ),
         onRequestPortfolio: (source) =>
-          openPortfolio(source ?? "standard"),
+          revealPortfolioFromWorld(source ?? "standard"),
         onQualityChange: (quality) => {
           syncQualityControls(quality);
           storeQuality(quality);
@@ -1449,7 +1670,7 @@ async function ensureGame(destination: ZoneId | null = null): Promise<PortfolioG
         canvas.focus({ preventScroll: true });
         syncGameInput();
         showWorldToast(
-          "WASD move · Shift sprint · Space jump · hold/release Q cast · F lantern · drag props",
+          "WASD move · click surfaces/portals to walk · hold/drag to steer · Shift sprint · Space jump · hold/release Q cast · F lantern",
         );
         return instance;
       } catch (error) {
@@ -1482,9 +1703,10 @@ async function ensureGame(destination: ZoneId | null = null): Promise<PortfolioG
     worldHud.hidden = true;
     fieldMenuButton.hidden = true;
     exploreButton.disabled = false;
+    // Shared startup recovery is app-owned, not output from whichever terminal
+    // command happened to await this load (and may already be stale).
     entryStatus.textContent =
-      "Interactive mode could not start here. The complete portfolio is still available.";
-    writeTerminal(`renderer error: ${detail}`, "error");
+      `Interactive mode could not start here. The complete portfolio is still available. Renderer error: ${detail}`;
     throw error;
   } finally {
     if (!game) gamePromise = null;
@@ -1496,7 +1718,10 @@ async function ensureGame(destination: ZoneId | null = null): Promise<PortfolioG
   return instance;
 }
 
-async function runTerminalCommand(rawCommand: string): Promise<void> {
+async function runTerminalCommand(
+  rawCommand: string,
+  isCurrent: () => boolean,
+): Promise<void> {
   const trimmed = rawCommand.trim();
   if (!trimmed) return;
 
@@ -1506,6 +1731,7 @@ async function runTerminalCommand(rawCommand: string): Promise<void> {
   writeTerminal(`❯ ${trimmed}`);
 
   if (normalized === "clear") {
+    terminalWorm.stop(undefined, false);
     clearTerminalOutput();
     return;
   }
@@ -1543,6 +1769,9 @@ async function runTerminalCommand(rawCommand: string): Promise<void> {
   if (normalized === "help") {
     writeTerminal("shell       ls [path] · cd <place> · pwd · cat <file> · tree · history [clear]");
     writeTerminal("journal     log [count|speech|achievements|clear] · reset history");
+    if (hasRecoveredGridServerPayload()) {
+      writeTerminal("recovered   trace · worm (c2)", "ok");
+    }
     writeTerminal(
       `navigation  map · goto <${terminalDestinationUsage()}> · tp <${terminalDestinationUsage()}> · zone`,
     );
@@ -1638,6 +1867,7 @@ async function runTerminalCommand(rawCommand: string): Promise<void> {
     }
     const originDirectory = terminalDirectory;
     const instance = await ensureGame();
+    if (!isCurrent()) return;
     const originZone = instance.getCurrentZone();
     if (originZone !== destination) {
       writeTerminal(
@@ -1645,7 +1875,17 @@ async function runTerminalCommand(rawCommand: string): Promise<void> {
         "muted",
       );
       closeTerminal("world");
-      await instance.terminalTeleport(destination);
+      const ownsCompletion = terminalRequests.checkpoint();
+      try {
+        await instance.terminalTeleport(destination);
+      } catch (error) {
+        if (ownsCompletion()) {
+          const detail = error instanceof Error ? error.message : "travel failed";
+          writeTerminal(`cd: /${destination}: ${detail}`, "error");
+        }
+        return;
+      }
+      if (!ownsCompletion()) return;
     }
     if (instance.getCurrentZone() !== destination) {
       writeTerminal(
@@ -1799,6 +2039,54 @@ async function runTerminalCommand(rawCommand: string): Promise<void> {
     return;
   }
 
+  if (normalized === "trace") {
+    const instance = await ensureGame();
+    if (!isCurrent()) return;
+    const lines = instance.readGridServerTrace();
+    if (!lines) {
+      writeTerminal(
+        "trace: no patched carrier. Signal Grid still reports two open leads and an empty magnetic slot.",
+        "error",
+      );
+      return;
+    }
+    for (const [index, line] of lines.entries()) {
+      writeTerminal(line, index === 0 ? "ok" : "normal");
+    }
+    return;
+  }
+
+  if (normalized === "worm") {
+    const requestedMode = (args[0] ?? "").toLowerCase();
+    const autorun = [
+      "autorun",
+      "auto",
+      "--autorun",
+    ].includes(requestedMode);
+    if (requestedMode && !autorun) {
+      writeTerminal(
+        "usage: worm [autorun]",
+        "error",
+      );
+      return;
+    }
+    const instance = await ensureGame();
+    if (!isCurrent()) return;
+    if (!instance.hasGridServerPayload()) {
+      writeTerminal(
+        "worm: executable not found. The coral rack still has two open patch sockets and an empty magnetic slot.",
+        "error",
+      );
+      return;
+    }
+    writeTerminal(
+      `CONNECT C2://192.168.0.1:31337 // fd0:/WORM.COM RESIDENT${autorun ? " // AUTORUN ROUTE LOCKED" : ""}`,
+      "ok",
+    );
+    terminalWorm.start({ autorun });
+    return;
+  }
+
   if (normalized === "echo") {
     writeTerminal(args.join(" "));
     return;
@@ -1816,11 +2104,17 @@ async function runTerminalCommand(rawCommand: string): Promise<void> {
 
   if (normalized === "which") {
     const candidate = (args[0] ?? "").toLowerCase();
+    const canonicalCandidate = resolveTerminalCommandName(candidate);
+    const recoveredCommand =
+      canonicalCandidate === "trace" || canonicalCandidate === "worm";
+    const found =
+      isTerminalCommandName(candidate) &&
+      (!recoveredCommand || hasRecoveredGridServerPayload());
     writeTerminal(
-      isTerminalCommandName(candidate)
+      found
         ? `/world/bin/${candidate}`
         : `${candidate || "which"} not found`,
-      isTerminalCommandName(candidate) ? "ok" : "error",
+      found ? "ok" : "error",
     );
     return;
   }
@@ -1834,6 +2128,10 @@ async function runTerminalCommand(rawCommand: string): Promise<void> {
       cat: "cat <file>: read a file in the current mounted place",
       history: "history [clear]: replay or clear commands from this terminal session",
       log: "log [count|all|speech|achievements|clear]: replay or clear the current expedition's world messages",
+      trace:
+        "trace: read the route recovered from Signal Grid's patched server bus",
+      worm:
+        "worm (c2) [autorun]: open a command-and-control uplink to the packet hunter recovered from Signal Grid; autorun follows a safe route until any direction hijacks it",
       goto:
         "goto <place>: close the terminal and follow a collision-aware physical route through portals",
       tp: "tp <place>: perform a cyan-pencil teleport rite and draw the route into the world",
@@ -1926,6 +2224,7 @@ async function runTerminalCommand(rawCommand: string): Promise<void> {
       );
     }
     const instance = await ensureGame();
+    if (!isCurrent()) return;
     const result = instance.walkTo(destination);
     if (result === "walking") {
       writeTerminal(`goto: walk graph engaged -> /${destination}`, "ok");
@@ -1955,6 +2254,7 @@ async function runTerminalCommand(rawCommand: string): Promise<void> {
       return;
     }
     const instance = await ensureGame();
+    if (!isCurrent()) return;
     if (!instance.hasEquippedTeleportPencil()) {
       writeTerminal(
         "tp: rite unavailable. Equip the cyan pencil first, or use cd <place> for an immediate shell route.",
@@ -1973,7 +2273,18 @@ async function runTerminalCommand(rawCommand: string): Promise<void> {
       "ok",
     );
     closeTerminal("world");
-    const traveled = await instance.ritualTeleport(destination);
+    const ownsCompletion = terminalRequests.checkpoint();
+    let traveled: boolean;
+    try {
+      traveled = await instance.ritualTeleport(destination);
+    } catch (error) {
+      if (ownsCompletion()) {
+        const detail = error instanceof Error ? error.message : "travel failed";
+        writeTerminal(`tp: /${destination}: ${detail}`, "error");
+      }
+      return;
+    }
+    if (!ownsCompletion()) return;
     writeTerminal(
       traveled
         ? `ritual route settled: ${instance.getCurrentZone()}`
@@ -1985,6 +2296,7 @@ async function runTerminalCommand(rawCommand: string): Promise<void> {
 
   if (normalized === "zone") {
     const instance = await ensureGame();
+    if (!isCurrent()) return;
     writeTerminal(`current zone: ${instance.getCurrentZone()}`, "ok");
     return;
   }
@@ -1996,6 +2308,7 @@ async function runTerminalCommand(rawCommand: string): Promise<void> {
       return;
     }
     const instance = await ensureGame();
+    if (!isCurrent()) return;
     instance.setQuality(requested);
     writeTerminal(`render quality: ${requested}`, "ok");
     return;
@@ -2008,12 +2321,14 @@ async function runTerminalCommand(rawCommand: string): Promise<void> {
       return;
     }
     const instance = await ensureGame();
+    if (!isCurrent()) return;
     writeTerminal(`movement multiplier: ${instance.setSpeedMultiplier(requested)}x`, "ok");
     return;
   }
 
   if (normalized === "noclip") {
     const instance = await ensureGame();
+    if (!isCurrent()) return;
     writeTerminal(`noclip: ${instance.toggleNoclip() ? "on" : "off"}`, "ok");
     return;
   }
@@ -2040,6 +2355,7 @@ async function runTerminalCommand(rawCommand: string): Promise<void> {
     const force =
       requested === "on" ? true : requested === "off" ? false : undefined;
     const instance = await ensureGame();
+    if (!isCurrent()) return;
     const enabled = instance.toggleCollisionDebug(force);
     writeTerminal(
       enabled
@@ -2075,6 +2391,7 @@ async function runTerminalCommand(rawCommand: string): Promise<void> {
       : explicitOverrideStage;
   if (overrideStage) {
     const instance = await ensureGame();
+    if (!isCurrent()) return;
     instance.grantSpellStage(overrideStage);
     instance.selectSpellStage(overrideStage);
     writeTerminal(
@@ -2096,6 +2413,7 @@ async function runTerminalCommand(rawCommand: string): Promise<void> {
     (args[0] ?? "").toLowerCase() === "interference"
   ) {
     const instance = await ensureGame();
+    if (!isCurrent()) return;
     instance.grantPacketInterference();
     writeTerminal("packet interference armed.", "ok");
     return;
@@ -2103,6 +2421,7 @@ async function runTerminalCommand(rawCommand: string): Promise<void> {
 
   if (normalized === "spell") {
     const instance = await ensureGame();
+    if (!isCurrent()) return;
     if (!requestedSpellStage) {
       writeTerminal(
         `equipped: ${worldProgress.selectedSpellStage} · highest recovered: ${worldProgress.spellStage}`,
@@ -2127,6 +2446,7 @@ async function runTerminalCommand(rawCommand: string): Promise<void> {
 
   if (normalized === "spark") {
     const instance = await ensureGame();
+    if (!isCurrent()) return;
     instance.castSpell(0.5);
     writeTerminal("current spell cast at half charge.", "ok");
     return;
@@ -2134,6 +2454,7 @@ async function runTerminalCommand(rawCommand: string): Promise<void> {
 
   if (normalized === "lantern") {
     const instance = await ensureGame();
+    if (!isCurrent()) return;
     const requested = (args[0] ?? "").toLowerCase();
     const active =
       requested === "on"
@@ -2147,13 +2468,21 @@ async function runTerminalCommand(rawCommand: string): Promise<void> {
 
   if (normalized === "respawn") {
     const instance = await ensureGame();
+    if (!isCurrent()) return;
     instance.respawn();
     writeTerminal("position restored.", "ok");
     return;
   }
 
   if (normalized === "ritual") {
-    const instance = await ensureGame("falls");
+    const instance = await ensureGame();
+    if (!isCurrent()) return;
+    // Loading must not authorize travel for an expired command. Once accepted,
+    // let this world-side route finish even if the terminal is then closed.
+    if (instance.getCurrentZone() !== "falls") {
+      await instance.teleport("falls");
+      if (!isCurrent()) return;
+    }
     instance.setSpeedMultiplier(1);
     if ((args[0] ?? "").toLowerCase() === "open") {
       const opened = instance.completeFantasyRitual();
@@ -2247,6 +2576,11 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-close]"
 for (const dialog of Object.values(dialogs)) {
   dialog.addEventListener("close", () => {
     if (dialog === portfolioDialog) {
+      portfolioPrepared = true;
+      portfolioDialog.dataset.prepared = "true";
+      portfolioDialog.inert = true;
+      portfolioDialog.setAttribute("aria-hidden", "true");
+      portfolioDialog.scrollTop = 0;
       game?.notifyPortfolioClosed();
       if (!synchronizingPortfolioRoute) clearPortfolioRoute();
     }
@@ -2265,6 +2599,10 @@ for (const dialog of Object.values(dialogs)) {
 }
 
 terminalPanel.addEventListener("close", () => {
+  // Native close events are queued; an older close must not tear down a
+  // terminal session that has already reopened.
+  if (terminalPanel.open) return;
+  terminalWorm.stop(undefined, false);
   syncGameInput();
   const focusMode = terminalCloseFocus;
   terminalCloseFocus = "return";
@@ -2518,18 +2856,24 @@ lanternButton.addEventListener("click", () => {
 
 terminalForm.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (terminalWorm.isActive) return;
   const command = terminalInput.value;
   if (!command.trim()) return;
   commandHistory = [...commandHistory.slice(-29), command];
   historyIndex = commandHistory.length;
   terminalInput.value = "";
-  void runTerminalCommand(command).catch((error: unknown) => {
+  window.clearTimeout(terminalCloseTimer);
+  terminalCloseTimer = 0;
+  const isCurrent = terminalRequests.begin(() => terminalPanel.open);
+  void runTerminalCommand(command, isCurrent).catch((error: unknown) => {
+    if (!isCurrent()) return;
     const detail = error instanceof Error ? error.message : "command failed";
     writeTerminal(detail, "error");
   });
 });
 
 terminalInput.addEventListener("keydown", (event) => {
+  if (terminalWorm.handleKeyDown(event) || terminalWorm.isActive) return;
   if (event.key === "ArrowUp") {
     event.preventDefault();
     historyIndex = Math.max(0, historyIndex - 1);
@@ -2555,11 +2899,19 @@ terminalInput.addEventListener("keydown", (event) => {
       if (match) terminalInput.value = `${command} ${match}`;
       return;
     }
-    const match = terminalCommandNames.find((candidate) =>
-      candidate.startsWith(command),
+    const match = terminalCommandNames.find(
+      (candidate) =>
+        candidate.startsWith(command) &&
+        (!["trace", "worm"].includes(resolveTerminalCommandName(candidate)) ||
+          hasRecoveredGridServerPayload()),
     );
     if (match) terminalInput.value = match;
   }
+});
+
+terminalPanel.addEventListener("keydown", (event) => {
+  if (event.target === terminalInput) return;
+  terminalWorm.handleKeyDown(event);
 });
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -2636,6 +2988,8 @@ function resetJoystick(event?: PointerEvent): void {
   ) {
     return;
   }
+  window.clearTimeout(touchDirectionPulseTimer);
+  touchDirectionPulseTimer = 0;
   const pointerId = joystickPointer;
   joystickPointer = null;
   if (pointerId !== null && joystick.hasPointerCapture(pointerId)) {
@@ -2643,6 +2997,16 @@ function resetJoystick(event?: PointerEvent): void {
   }
   joystickKnob.style.transform = "translate(-50%, -50%)";
   game?.setTouchAxes(0, 0);
+}
+
+function pulseTouchDirection(horizontal: number, forward: number): void {
+  if (joystickPointer !== null) return;
+  window.clearTimeout(touchDirectionPulseTimer);
+  game?.setTouchAxes(horizontal, forward);
+  touchDirectionPulseTimer = window.setTimeout(() => {
+    touchDirectionPulseTimer = 0;
+    game?.setTouchAxes(0, 0);
+  }, 260);
 }
 
 function updateJoystick(event: PointerEvent): void {
@@ -2669,6 +3033,8 @@ joystick.addEventListener("pointerdown", (event) => {
   }
   event.preventDefault();
   event.stopPropagation();
+  window.clearTimeout(touchDirectionPulseTimer);
+  touchDirectionPulseTimer = 0;
   joystickPointer = event.pointerId;
   joystick.setPointerCapture(event.pointerId);
   updateJoystick(event);
@@ -2677,6 +3043,14 @@ joystick.addEventListener("pointermove", updateJoystick);
 joystick.addEventListener("pointerup", resetJoystick);
 joystick.addEventListener("pointercancel", resetJoystick);
 joystick.addEventListener("lostpointercapture", resetJoystick);
+for (const button of touchDirectionButtons) {
+  button.addEventListener("click", () => {
+    const horizontal = Number(button.dataset.touchHorizontal);
+    const forward = Number(button.dataset.touchForward);
+    if (!Number.isFinite(horizontal) || !Number.isFinite(forward)) return;
+    pulseTouchDirection(horizontal, forward);
+  });
+}
 
 touchJump.addEventListener("pointerdown", (event) => {
   if (event.pointerType === "mouse" && event.button !== 0) return;
@@ -2713,6 +3087,7 @@ syncProgressResetControl();
 applyWorldPreferences();
 syncVisualViewport();
 syncPortfolioRoute();
+schedulePortfolioPreparation();
 window.addEventListener("hashchange", syncPortfolioRoute);
 window.addEventListener("popstate", syncPortfolioRoute);
 window.visualViewport?.addEventListener("resize", syncVisualViewport, { passive: true });

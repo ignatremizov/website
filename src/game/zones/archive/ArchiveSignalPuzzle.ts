@@ -90,6 +90,7 @@ export interface ArchiveSignalPuzzleHost {
   getElapsed: () => number;
   hasAchievement: (title: string) => boolean;
   onStatus: (message: string, options?: WorldStatusOptions) => void;
+  onPortalBeam: () => void;
   setPointerReachTarget: (
     target: THREE.Object3D | null,
     until: number,
@@ -99,7 +100,7 @@ export interface ArchiveSignalPuzzleHost {
   syncPointerCursor: (idleCursor?: "" | "grab") => void;
 }
 
-type ArchiveSignalTarget = number | "lens" | "void";
+type ArchiveSignalTarget = number | "lens" | "portal" | "void";
 type ArchiveSignalRouteResult =
   | "loop"
   | "open"
@@ -408,6 +409,8 @@ const archiveSignalCyanMonitorEndpoint = new THREE.Vector3(
   1.35,
   -8.05,
 );
+const archivePortalPosition = new THREE.Vector3(0, 1.1, 10.3);
+const archivePortalCaptureRadius = 1.28;
 
 const archiveSignalResolvedTargets = [1, 2, 1, 0] as const;
 // A correct circuit reveals an authored sky rather than projecting the relay
@@ -445,6 +448,38 @@ const archiveDecodedSkyStarPositions = [
   new THREE.Vector3(0, 5.92, 1.32),
   new THREE.Vector3(0, archiveDecodedSkyBodyY, 0),
 ] as const;
+
+function findHorizontalRayCircleDistance(
+  originX: number,
+  originZ: number,
+  directionX: number,
+  directionZ: number,
+  centerX: number,
+  centerZ: number,
+  radius: number,
+  minimumDistance: number,
+  maximumDistance: number,
+): number | null {
+  const directionLength = Math.hypot(directionX, directionZ);
+  if (directionLength <= 0.0001) return null;
+  const normalizedX = directionX / directionLength;
+  const normalizedZ = directionZ / directionLength;
+  const offsetX = centerX - originX;
+  const offsetZ = centerZ - originZ;
+  const along = offsetX * normalizedX + offsetZ * normalizedZ;
+  if (along < minimumDistance || along > maximumDistance) return null;
+  const perpendicularSquared =
+    offsetX * offsetX + offsetZ * offsetZ - along * along;
+  const radiusSquared = radius * radius;
+  if (perpendicularSquared > radiusSquared) return null;
+  const entry =
+    along - Math.sqrt(Math.max(0, radiusSquared - perpendicularSquared));
+  return THREE.MathUtils.clamp(
+    entry,
+    minimumDistance,
+    maximumDistance,
+  );
+}
 
 
 export class ArchiveSignalPuzzle {
@@ -2271,6 +2306,7 @@ export class ArchiveSignalPuzzle {
     const puzzle = this.archiveSignalPuzzle;
     if (!puzzle) return null;
     if (target === "lens") return puzzle.lensPosition;
+    if (target === "portal") return archivePortalPosition;
     if (target === "void") return null;
     return puzzle.relays[target]?.position ?? null;
   }
@@ -2278,6 +2314,7 @@ export class ArchiveSignalPuzzle {
 
   private getArchiveSignalTargetName(target: ArchiveSignalTarget): string {
     if (target === "lens") return "the observability lens";
+    if (target === "portal") return "the violet threshold";
     if (target === "void") return "an unmarked bearing";
     const relay = this.archiveSignalPuzzle?.relays[target];
     return relay ? `the ${relay.name} prism` : "an empty bearing";
@@ -2341,13 +2378,34 @@ export class ArchiveSignalPuzzle {
       archiveSignalFreeAimMinimumDistance,
       archiveSignalAmberVoidRadius,
     );
+    const portalDistance = findHorizontalRayCircleDistance(
+      relay.position.x,
+      relay.position.z,
+      directionX,
+      directionZ,
+      archivePortalPosition.x,
+      archivePortalPosition.z,
+      archivePortalCaptureRadius,
+      archiveSignalFreeAimMinimumDistance,
+      archiveSignalAmberVoidRadius,
+    );
     if (
       nearestRelay &&
-      (solidDistance === null || nearestDistance <= solidDistance)
+      (solidDistance === null || nearestDistance <= solidDistance) &&
+      (portalDistance === null || nearestDistance <= portalDistance)
     ) {
       relay.aimTarget = nearestRelay.id;
       relay.aimPosition.copy(nearestRelay.position);
       return nearestRelay.id;
+    }
+    if (
+      portalDistance !== null &&
+      (solidDistance === null || portalDistance <= solidDistance)
+    ) {
+      relay.aimTarget = "portal";
+      relay.aimPosition.copy(archivePortalPosition);
+      relay.aimPosition.y = relay.beamHeight;
+      return "portal";
     }
 
     const distance =
@@ -2588,6 +2646,7 @@ export class ArchiveSignalPuzzle {
     let current = firstRelay;
     let result: ArchiveSignalRouteResult = "loop";
     let reachedLens = false;
+    let reachedPortal = false;
     let closedAtRelay: number | null = null;
     let lensOutcome: ArchiveSignalLensOutcome = null;
     const turnedRelayWasReceiving =
@@ -2603,6 +2662,11 @@ export class ArchiveSignalPuzzle {
       route.push(current.aimPosition.clone());
       colors.push(current.accent);
       if (target === "void") {
+        result = "open";
+        break;
+      }
+      if (target === "portal") {
+        reachedPortal = true;
         result = "open";
         break;
       }
@@ -2879,6 +2943,7 @@ export class ArchiveSignalPuzzle {
         : archiveSignalAmberVoidRadius;
     puzzle.freeAimImpactActive =
       result === "open" &&
+      !reachedPortal &&
       terminalRelay?.manualYaw !== null &&
       terminalDistance < archiveSignalAmberVoidRadius - 1;
     if (puzzle.freeAimImpactActive && terminalRelay) {
@@ -3052,6 +3117,13 @@ export class ArchiveSignalPuzzle {
       return;
     }
     if (puzzle.result === "open") {
+      if (reachedPortal) {
+        this.host.onPortalBeam();
+        this.host.onStatus(
+          `${turnObservation} The violet threshold drinks the carrier without reflection. Its inner face answers with a compressed pulse aimed toward the Field Station.`,
+        );
+        return;
+      }
       this.host.onStatus(
         puzzle.freeAimImpactActive
           ? `${turnObservation} The carrier reaches no crystal face and diffracts against solid Archive hardware.`

@@ -94,6 +94,7 @@ export interface ArchiveOrbitPlaygroundHost {
     landingMessage?: string,
     collisionClearAbove?: number,
     occludesPlayer?: boolean,
+    blocksRay?: boolean,
   ) => void;
   updatePointerRay: (event: PointerEvent) => void;
   getKickables: () => readonly Kickable[];
@@ -114,8 +115,12 @@ export interface ArchiveOrbitPlaygroundHost {
 }
 
 const up = new THREE.Vector3(0, 1, 0);
-const atlasX = -2;
-const atlasZ = -1.1;
+export const archiveAtlasPosition = {
+  x: -2,
+  z: -1.1,
+} as const;
+const atlasX = archiveAtlasPosition.x;
+const atlasZ = archiveAtlasPosition.z;
 const atlasBarrierRadius = 2.08;
 const orbitOuterRadius = 13.1;
 const ascensionHeight = 5.55;
@@ -175,6 +180,7 @@ export class ArchiveOrbitPlayground {
       "archive-star-atlas",
       "You balance atop the turning atlas. Its brass orbit circles beneath your boots.",
       undefined,
+      false,
       false,
     );
     this.host.addInteraction(
@@ -244,13 +250,11 @@ export class ArchiveOrbitPlayground {
   }
 
   refreshQuality(): void {
-    const quality = this.host.getQuality();
+    // These five low-poly worlds are part of the Archive's shared physics
+    // sandbox, not decorative quality detail. Hiding one also removes its
+    // spell, collision, and TO THE MOON interactions.
     for (const planet of this.planets) {
-      planet.pivot.visible =
-        this.heldPlanets.has(planet) ||
-        quality === "high" ||
-        (quality === "medium" && planet.detail < 4) ||
-        planet.detail < 2;
+      planet.pivot.visible = true;
     }
   }
 
@@ -463,7 +467,7 @@ export class ArchiveOrbitPlayground {
 
     this.holds.delete(event.pointerId);
     this.heldPlanets.delete(planet);
-    planet.pivot.visible = this.isVisibleAtQuality(planet);
+    planet.pivot.visible = true;
     if (this.host.canvas.hasPointerCapture(event.pointerId)) {
       this.host.canvas.releasePointerCapture(event.pointerId);
     }
@@ -478,9 +482,7 @@ export class ArchiveOrbitPlayground {
     this.holds.clear();
     this.heldPlanets.clear();
     for (const [pointerId, hold] of holds) {
-      hold.planet.pivot.visible = this.isVisibleAtQuality(
-        hold.planet,
-      );
+      hold.planet.pivot.visible = true;
       if (this.host.canvas.hasPointerCapture(pointerId)) {
         this.host.canvas.releasePointerCapture(pointerId);
       }
@@ -1035,7 +1037,7 @@ export class ArchiveOrbitPlayground {
     }
     pivot.add(planet);
     parent.add(pivot);
-    pivot.visible = this.isDetailVisibleAtQuality(detail);
+    pivot.visible = true;
     this.planets.push({
       pivot,
       planet,
@@ -1667,19 +1669,4 @@ export class ArchiveOrbitPlayground {
       flare * (this.host.getQuality() === "low" ? 3.8 : 6.2);
   }
 
-  private isVisibleAtQuality(planet: OrbitingPlanet): boolean {
-    return (
-      this.heldPlanets.has(planet) ||
-      this.isDetailVisibleAtQuality(planet.detail)
-    );
-  }
-
-  private isDetailVisibleAtQuality(detail: number): boolean {
-    const quality = this.host.getQuality();
-    return (
-      quality === "high" ||
-      (quality === "medium" && detail < 4) ||
-      detail < 2
-    );
-  }
 }

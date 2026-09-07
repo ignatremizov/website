@@ -373,6 +373,7 @@ export class WorldCollapseSequence {
     this.light = new THREE.PointLight(0xffc46b, 0, 26, 1.45);
     this.light.position.y = 0.3;
     this.light.castShadow = false;
+    this.light.visible = this.quality !== "low";
     this.group.add(this.light);
 
     const counts = qualityCounts[this.quality];
@@ -543,8 +544,10 @@ export class WorldCollapseSequence {
       Math.sin(flare * Math.PI) * 0.82;
     this.flare.scale.setScalar(1.2 + flare * 7.5);
     this.light.intensity =
-      intensity * (2.2 + Math.sin(elapsed * 4.5) * 0.34) +
-      Math.sin(flare * Math.PI) * 18;
+      this.quality === "low"
+        ? 0
+        : intensity * (2.2 + Math.sin(elapsed * 4.5) * 0.34) +
+          Math.sin(flare * Math.PI) * 18;
 
     if (!this.reducedMotion) {
       this.updateParticles(elapsed, intensity, flare);

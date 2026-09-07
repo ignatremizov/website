@@ -32,6 +32,11 @@ function isInteractiveTarget(target: EventTarget | null): boolean {
 
 export class InputController {
   private readonly pressed = new Set<string>();
+  private readonly movement: MovementAxes = {
+    horizontal: 0,
+    forward: 0,
+    running: false,
+  };
   private touchHorizontal = 0;
   private touchForward = 0;
   private jumpQueued = false;
@@ -64,7 +69,10 @@ export class InputController {
 
   getMovement(): MovementAxes {
     if (!this.enabled) {
-      return { horizontal: 0, forward: 0, running: false };
+      this.movement.horizontal = 0;
+      this.movement.forward = 0;
+      this.movement.running = false;
+      return this.movement;
     }
 
     const keyboardHorizontal =
@@ -82,11 +90,11 @@ export class InputController {
       forward /= length;
     }
 
-    return {
-      horizontal,
-      forward,
-      running: this.pressed.has("ShiftLeft") || this.pressed.has("ShiftRight"),
-    };
+    this.movement.horizontal = horizontal;
+    this.movement.forward = forward;
+    this.movement.running =
+      this.pressed.has("ShiftLeft") || this.pressed.has("ShiftRight");
+    return this.movement;
   }
 
   isActive(): boolean {

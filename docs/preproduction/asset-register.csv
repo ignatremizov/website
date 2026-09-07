@@ -17,3 +17,6 @@ space-smiley,image,repository project asset,project asset,N/A,images/Smiley-Face
 field-hero,image,project-generated asset,project input,N/A,images/field-arch-hero.jpg,approved,Loading-shell background
 portrait,image,project-generated asset,project input,N/A,images/ignat-forward-portrait.jpg,approved,Quick Portfolio portrait
 turtle-undertale-youtube,audio,https://www.youtube.com/watch?v=KtC-pl9P3kE,official YouTube embed,Toby Fox / Materia Music Publishing,N/A,approved,Visible privacy-enhanced player created only during the turtle ride
+falls-geology-reference,model,project FallsScenery mesh builders,project source,N/A,art/blender/falls-geology-medium.glb,reference,Texture-free medium geology study; not deployed or a complete exported level
+falls-geology-blender,model,project geology exporter and Blender,project source,N/A,art/blender/falls-geology-medium.blend,reference,Editable inspection scene; copy before hand editing because regeneration overwrites it
+falls-geology-preview,image,project geology exporter and Blender Workbench,project source,N/A,art/blender/falls-geology-medium.png,reference,Bounded offline geometry preview; not an in-game screenshot

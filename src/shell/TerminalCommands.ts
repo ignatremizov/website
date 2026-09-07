@@ -12,6 +12,8 @@ export const terminalCommandDefinitions = [
   { name: "cat" },
   { name: "tree" },
   { name: "log" },
+  { name: "trace" },
+  { name: "worm", aliases: ["c2"] },
   { name: "history" },
   { name: "echo" },
   { name: "date" },

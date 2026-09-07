@@ -52,6 +52,13 @@ the coral Pong paddle as his hand; Packet Interference disrupts its prediction.
 Pong completion grants the Controller's dormant storm-mark independently and may
 happen before or after Archive pinball.
 
+Two loose magnetic patch leads and a floppy disk can be carried to the coral server
+rack. Completing that optional SNEAKERNET repair installs `WORM.COM` across the
+terminal network and opens a C2 endpoint at `192.168.0.1:31337`. `worm` or its `c2`
+alias launches a bounded packet-hunting Snake game with keyboard, swipe, and
+on-screen controls; `trace` reports the recovered carrier, endpoint, and install path.
+The hidden bonus does not add a required portal milestone.
+
 The cube is a nested threshold rather than another Field Station portal. Its first
 interaction performs a short browser-native reconstruction and opens without requiring
 Pong, Hanoi, a spell stage, or another challenge. The first physical crossing leads

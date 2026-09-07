@@ -1,16 +1,35 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { AmbientGrid } from "./AmbientGrid";
+import {
+  canGuideDropWithRunup,
+  canGuidedJump,
+  ClickNavigationMarker,
+  collectClickNavigationBlockers,
+  getGuidedJumpRange,
+  hasCrossedGuidedLandingPlane,
+  isClickNavigationPassThrough,
+  isContinuousClickNavigationGesture,
+  playerJumpGravity,
+  playerJumpLaunchVelocity,
+  shouldCommitOneShotClickNavigation,
+} from "./ClickNavigation";
 import { CubeRematerialization } from "./CubeRematerialization";
 import {
   createFieldDesirePathGeometry,
   fieldMapTablePosition,
 } from "./FieldDesirePaths";
 import {
+  FramePacer,
+  FrameTimingWindow,
+  selectTargetFrameRate,
+} from "./FrameTiming";
+import {
   InputController,
   type MovementAxes,
 } from "./InputController";
 import type { Kickable } from "./Kickable";
+import { OrderedSpatialIndex } from "./OrderedSpatialIndex";
 import { PencilTeleportRitual } from "./PencilTeleportRitual";
 import {
   PortalNetwork,
@@ -21,13 +40,26 @@ import {
   type IgnitionPanicFrame,
 } from "./PlayerIgnitionPanic";
 import { RuneAltar } from "./RuneAltar";
-import { ArchiveOrbitPlayground } from "./zones/archive/ArchiveOrbitPlayground";
+import {
+  archiveAtlasPosition,
+  ArchiveOrbitPlayground,
+} from "./zones/archive/ArchiveOrbitPlayground";
 import { ArchiveSignalPuzzle } from "./zones/archive/ArchiveSignalPuzzle";
 import { VoidTurtleRide } from "./zones/field/VoidTurtleRide";
 import {
   FallsRuneRitual,
   type FallsFishBaitShard,
 } from "./zones/falls/FallsRuneRitual";
+import { FallsFireflyField } from "./zones/falls/FallsFireflyField";
+import {
+  addWaterfallCaveLining,
+  addWaterfallOutcroppings,
+  createLayeredCliffGeometry,
+  createWaterfallSheetGeometry,
+  shadeFallsStoneGeometry,
+} from "./zones/falls/FallsScenery";
+import { GridFloorTraffic } from "./zones/grid/GridFloorTraffic";
+import { GridServerPatchPuzzle } from "./zones/grid/GridServerPatchPuzzle";
 import { HanoiPuzzle } from "./zones/grid/HanoiPuzzle";
 import {
   PongChallenge,
@@ -60,9 +92,22 @@ import {
   isInsideFallsRiver,
 } from "./fallsRiver";
 import {
+  createArchiveConsoleDisplayTexture,
+  createArchiveFloorTexture,
+  createFallsCliffTexture,
+  createFallsBridgeTexture,
+  createFallsGroundReliefTexture,
+  createFallsGroundTexture,
+  createFallsWaterTexture,
   createFieldAtlasTexture,
+  createFieldCanvasTexture,
   createFieldDesirePathTexture,
+  createFieldFoundationTexture,
+  createFieldGroundReliefTexture,
   createFieldGroundTexture,
+  createFieldShelfTexture,
+  createFieldWoodTexture,
+  createGridCircuitTexture,
 } from "./proceduralTextures";
 import { addBox, addCylinder } from "./scenePrimitives";
 import { disposeObjectTree } from "./sceneResources";
@@ -126,6 +171,8 @@ const worldCollapseFarewells: Readonly<
 
 export interface GameMetrics {
   fps: number;
+  p95FrameMs: number;
+  worstFrameMs: number;
   drawCalls: number;
   triangles: number;
 }
@@ -145,6 +192,7 @@ export interface GameHooks {
   onTransition: (active: boolean) => void;
   onRequestMap: () => void;
   onRequestTerminal: () => void;
+  onPreparePortfolio: (source?: PortfolioRevealSource) => void;
   onRequestPortfolio: (source?: PortfolioRevealSource) => void;
   onQualityChange: (quality: QualityTier) => void;
   onPongChange: (active: boolean, playerScore: number, daemonScore: number) => void;
@@ -210,6 +258,20 @@ interface AnimatedItem {
   amplitude: number;
   rotationSpeed: number;
   rotationAxis?: "x" | "y" | "z";
+  texture?: THREE.Texture;
+  textureVelocity?: readonly [x: number, y: number];
+}
+
+interface FallsVisualMaterials {
+  ground: THREE.MeshStandardMaterial;
+  groundDark: THREE.MeshStandardMaterial;
+  cliff: THREE.MeshStandardMaterial;
+  cliffDark: THREE.MeshStandardMaterial;
+  rock: THREE.MeshStandardMaterial;
+  wetRock: THREE.MeshStandardMaterial;
+  water: THREE.MeshBasicMaterial;
+  foam: THREE.ShaderMaterial;
+  flowTexture: THREE.CanvasTexture;
 }
 
 interface ZoneBoundsCircle {
@@ -356,6 +418,47 @@ interface AtlasAutopilotState {
   stalledFor: number;
 }
 
+interface ClickNavigationTarget {
+  position: THREE.Vector3;
+  markerY: number;
+  surface: SurfaceArea | null;
+  surfaceOffsetX: number;
+  surfaceOffsetZ: number;
+  reachable: boolean;
+}
+
+interface ClickNavigationPress {
+  pointerId: number;
+  pointerType: string;
+  startClientX: number;
+  startClientY: number;
+  currentClientX: number;
+  currentClientY: number;
+  startedAt: number;
+  nextRetargetAt: number;
+  moved: boolean;
+  continuous: boolean;
+  focusOnly: boolean;
+  target: ClickNavigationTarget;
+}
+
+interface ClickNavigationState {
+  target: ClickNavigationTarget;
+  path: THREE.Vector3[];
+  waypointIndex: number;
+  manualOverride: boolean;
+  requiresJump: boolean;
+  jumpTriggered: boolean;
+  airborneObserved: boolean;
+  jumpAttempts: number;
+  jumpDirectionX: number;
+  jumpDirectionZ: number;
+  plannedTarget: THREE.Vector3;
+  plannedSurface: SurfaceArea | null;
+  previousDistance: number;
+  stalledFor: number;
+}
+
 interface LegacySimulationCubeState {
   capsule: THREE.Group;
   visualRoot: THREE.Group;
@@ -389,8 +492,16 @@ interface ArchiveDataGlassState {
 
 interface LanternState {
   light: THREE.Mesh;
+  pool: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
   position: THREE.Vector3;
   litUntil: number;
+  targetLightIntensity: number;
+  targetLightDistance: number;
+}
+
+interface FieldLanternLightLease {
+  light: THREE.PointLight;
+  lantern: LanternState | null;
 }
 
 interface BreakableMonitor {
@@ -506,13 +617,28 @@ interface TentState {
 interface LanternReveal {
   mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   range: number;
+  /** Optional moving world-space anchor for a reveal nested under a loose prop. */
+  position?: THREE.Vector3;
   isAvailable?: () => boolean;
 }
 
 interface WanderingNpc {
   group: THREE.Group;
-  origin: THREE.Vector3;
+  home: THREE.Vector3;
   interactionId: string;
+  crowdingSpeaker: string;
+  crowdingQuips: readonly string[];
+  crowdingQuipIndex: number;
+  crowdingQuipCooldownUntil: number;
+  crowdedFromAbove: boolean;
+  signalCrystal: THREE.Mesh<
+    THREE.OctahedronGeometry,
+    THREE.MeshBasicMaterial
+  >;
+  signalAura: THREE.Mesh<
+    THREE.TorusGeometry,
+    THREE.MeshBasicMaterial
+  >;
   speechHalo: THREE.Mesh<
     THREE.TorusGeometry,
     THREE.MeshBasicMaterial
@@ -525,12 +651,29 @@ interface WanderingNpc {
   angle: number;
 }
 
+interface FlyingFishMagicRecall {
+  schoolIndex: number;
+  target: THREE.Vector3;
+  origins: THREE.Vector3[];
+  waterTargets: THREE.Vector3[];
+  color: THREE.Color;
+  age: number;
+  duration: number;
+}
+
 interface FishSchool {
   mesh: THREE.InstancedMesh;
   aura: THREE.InstancedMesh<
     THREE.TorusGeometry,
     THREE.MeshBasicMaterial
   >;
+  magicPoints: THREE.Points<
+    THREE.BufferGeometry,
+    THREE.PointsMaterial
+  >;
+  magicPositions: Float32Array;
+  magicColors: Float32Array;
+  magicRecalls: FlyingFishMagicRecall[];
   dummy: THREE.Object3D;
   positions: THREE.Vector3[];
   maximumCount: number;
@@ -547,6 +690,11 @@ interface FishSchool {
 const riverFishCount = 10;
 const flyingFishPerShard = 5;
 const maximumFlyingFishSchools = 6;
+const fishMagicParticlesPerFish = 4;
+const maximumFishMagicParticleCount =
+  flyingFishPerShard *
+  maximumFlyingFishSchools *
+  fishMagicParticlesPerFish;
 const maximumFishCount =
   riverFishCount + flyingFishPerShard * maximumFlyingFishSchools;
 
@@ -588,6 +736,39 @@ const palette = {
   water: 0x25aabd,
 };
 
+const npcCrowdingDialogue: Readonly<
+  Record<string, { speaker: string; lines: readonly string[] }>
+> = {
+  archivist: {
+    speaker: "Archivist",
+    lines: [
+      "Mind the marginalia. I am not a footnote.",
+      "The record will omit that landing.",
+    ],
+  },
+  keeper: {
+    speaker: "Keeper",
+    lines: [
+      "I keep the old stones. I do not keep your boots.",
+      "The river has better manners.",
+    ],
+  },
+  tinkerer: {
+    speaker: "Tinkerer",
+    lines: [
+      "Careful. Those boots are wildly out of calibration.",
+      "That is not how one tests a plumbob.",
+    ],
+  },
+  "daemon-controller": {
+    speaker: "Daemon Controller",
+    lines: [
+      "Unauthorized vertical input.",
+      "Collision rejected. Dignity packet lost.",
+    ],
+  },
+};
+
 const up = new THREE.Vector3(0, 1, 0);
 const avatarPitchAxis = new THREE.Vector3(1, 0, 0);
 const avatarLongAxis = new THREE.Vector3(0, 1, 0);
@@ -603,6 +784,7 @@ const fieldCompassMountQuaternion = new THREE.Quaternion().setFromEuler(
 const fieldCompassMountScale = 0.96;
 const playerOcclusionLayer = 3;
 const playerRevealRenderLayer = 4;
+const playerOcclusionSampleHeights = [1.95, 1.25, 0.55] as const;
 // The avatar and near-field transparent assemblies share this late layer so
 // ordinary depth testing, rather than render-pass order, resolves overlaps.
 const playerRenderLayer = 5;
@@ -676,6 +858,48 @@ function createMaterials() {
       side: THREE.DoubleSide,
     });
 
+  const radialDecal = (
+    name: string,
+    color: THREE.ColorRepresentation,
+    opacity: number,
+    blending: THREE.Blending,
+  ): THREE.ShaderMaterial =>
+    new THREE.ShaderMaterial({
+      name,
+      uniforms: {
+        color: { value: new THREE.Color(color) },
+        opacity: { value: opacity },
+      },
+      vertexShader: `
+        varying vec2 radialUv;
+
+        void main() {
+          radialUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 color;
+        uniform float opacity;
+        varying vec2 radialUv;
+
+        void main() {
+          float radius = length((radialUv - 0.5) * 2.0);
+          float feather = 1.0 - smoothstep(0.08, 1.0, radius);
+          float alpha = pow(max(0.0, feather), 1.65) * opacity;
+          if (alpha < 0.002) discard;
+          gl_FragColor = vec4(color, alpha);
+        }
+      `,
+      transparent: true,
+      depthTest: true,
+      depthWrite: false,
+      blending,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+      fog: false,
+    });
+
   return {
     ground: standard(palette.stone, 0.95),
     stone: standard(palette.stoneWarm, 0.93),
@@ -707,10 +931,22 @@ function createMaterials() {
       color: palette.parchment,
       transparent: true,
       opacity: 0.92,
-      depthTest: false,
+      depthTest: true,
       depthWrite: false,
       side: THREE.DoubleSide,
     }),
+    softShadow: radialDecal(
+      "soft-world-contact-shadow",
+      0x020504,
+      0.2,
+      THREE.NormalBlending,
+    ),
+    warmLightPool: radialDecal(
+      "field-lantern-warm-light-pool",
+      0xff9b36,
+      0,
+      THREE.AdditiveBlending,
+    ),
     npc: new THREE.MeshStandardMaterial({
       color: 0xffffff,
       vertexColors: true,
@@ -785,6 +1021,7 @@ export class PortfolioGame {
   private readonly kickables: Kickable[] = [];
   private readonly telescopeRigs: TelescopeRig[] = [];
   private readonly lanterns: LanternState[] = [];
+  private readonly fieldLanternLightLeases: FieldLanternLightLease[] = [];
   private readonly lanternReveals: LanternReveal[] = [];
   private readonly digitClouds: DigitCloud[] = [];
   private readonly serverRacks: ServerRackState[] = [];
@@ -792,6 +1029,22 @@ export class PortfolioGame {
   private readonly playerPosition = new THREE.Vector3(...fieldEntrySpawn);
   private readonly playerRadius = 0.4;
   private readonly playerCollisionHeight = 2.3;
+  private readonly staticColliderIndex =
+    new OrderedSpatialIndex<StaticCollider>();
+  private readonly surfaceAreaIndex = new OrderedSpatialIndex<SurfaceArea>(
+    4,
+    (surface) => {
+      const defaultMargin = surface.requiresJump
+        ? this.playerRadius * 0.34
+        : 0;
+      return Math.max(
+        surface.supportMargin ?? defaultMargin,
+        surface.edgeGrace ?? defaultMargin,
+      );
+    },
+  );
+  private readonly staticColliderCandidates: StaticCollider[] = [];
+  private readonly surfaceAreaCandidates: SurfaceArea[] = [];
   private readonly tempWorld = new THREE.Vector3();
   private readonly ambientGridDragTarget = new THREE.Vector3();
   private readonly tempDirection = new THREE.Vector3();
@@ -808,6 +1061,11 @@ export class PortfolioGame {
   private readonly pointerRaycaster = new THREE.Raycaster();
   private readonly pointerActionHits: THREE.Intersection[] = [];
   private readonly pointerActions: PointerAction[] = [];
+  private readonly clickNavigationVisualHits: THREE.Intersection[] = [];
+  private readonly clickNavigationVisualBlockers: THREE.Mesh[] = [];
+  private readonly clickNavigationPlane = new THREE.Plane(up);
+  private readonly clickNavigationPoint = new THREE.Vector3();
+  private readonly clickNavigationMarkerPosition = new THREE.Vector3();
   private readonly mathInstanceDragHits: THREE.Intersection[] = [];
   private readonly mathInstanceDrags: MathInstanceDragSpec[] = [];
   private mathInstanceDragHold: MathInstanceDragHold | null = null;
@@ -818,6 +1076,9 @@ export class PortfolioGame {
   private readonly playerOcclusionDirection = new THREE.Vector3();
   private readonly playerOcclusionHits: THREE.Intersection[] = [];
   private readonly playerOccluders: THREE.Object3D[] = [];
+  private readonly playerOcclusionMatrixRoots: THREE.Object3D[] = [];
+  private readonly playerOcclusionUpdatedAncestors: THREE.Object3D[] = [];
+  private readonly playerOcclusionAncestorStack: THREE.Object3D[] = [];
   private readonly collisionDebugGroup = new THREE.Group();
   private readonly collisionDebugBlockerMaterial =
     new THREE.LineBasicMaterial({
@@ -847,6 +1108,25 @@ export class PortfolioGame {
   private readonly pencilRepairDirection = new THREE.Vector3();
 
   private renderer!: THREE.WebGLRenderer;
+  private clickNavigationMarker: ClickNavigationMarker | null = null;
+  private clickNavigationHover: ClickNavigationTarget | null = null;
+  private clickNavigationPress: ClickNavigationPress | null = null;
+  private clickNavigation: ClickNavigationState | null = null;
+  private clickNavigationJumpQueued = false;
+  private lastClickNavigationHoverSample = Number.NEGATIVE_INFINITY;
+  private clickNavigationPointerInside = false;
+  private clickNavigationPointerClientX = 0;
+  private clickNavigationPointerClientY = 0;
+  private clickNavigationHoverProjectionDirty = false;
+  private clickNavigationHoverProjectionCaptured = false;
+  private nextClickNavigationHoverProjectionAt = 0;
+  private readonly clickNavigationHoverCameraWorldMatrix =
+    new THREE.Matrix4();
+  private readonly clickNavigationHoverProjectionMatrix =
+    new THREE.Matrix4();
+  private readonly clickNavigationHoverPlayerPosition =
+    new THREE.Vector3();
+  private clickNavigationHoverFeetHeight = 0;
   private ambientGrid: AmbientGrid | null = null;
   private player!: AvatarRig;
   private playerShadow!: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>;
@@ -865,6 +1145,7 @@ export class PortfolioGame {
   private lanternAura!: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
   private zoneGroup = new THREE.Group();
   private decorativeGroup = new THREE.Group();
+  private hemisphere!: THREE.HemisphereLight;
   private sunlight!: THREE.DirectionalLight;
   private ambientFill!: THREE.AmbientLight;
   private activeInteraction: Interaction | null = null;
@@ -904,9 +1185,12 @@ export class PortfolioGame {
   private readonly voidTurtleRide: VoidTurtleRide;
   private readonly hanoiPuzzle: HanoiPuzzle;
   private readonly pongChallenge: PongChallenge;
+  private readonly gridFloorTraffic = new GridFloorTraffic();
+  private readonly gridServerPatchPuzzle: GridServerPatchPuzzle;
   private readonly archiveOrbitPlayground: ArchiveOrbitPlayground;
   private readonly archiveSignalPuzzle: ArchiveSignalPuzzle;
   private readonly fallsRuneRitual: FallsRuneRitual;
+  private readonly fallsFireflyField = new FallsFireflyField();
   private readonly portalNetwork: PortalNetwork;
   private pongRoguePacketLease: PongRoguePacketLease | null = null;
   private archiveDataGlass: ArchiveDataGlassState | null = null;
@@ -932,6 +1216,8 @@ export class PortfolioGame {
   private running = false;
   private disposed = false;
   private documentVisible = !document.hidden;
+  private windowFocused = document.hasFocus();
+  private windowFocusRecoveredAt = Number.NEGATIVE_INFINITY;
   private externalInputEnabled = true;
   private transitioning = false;
   private preferReducedMotion = false;
@@ -940,9 +1226,8 @@ export class PortfolioGame {
   private speedMultiplier = 1;
   private elapsed = 0;
   private previousFrame = performance.now();
-  private lastRenderedFrame = 0;
-  private frameCount = 0;
-  private metricElapsed = 0;
+  private readonly framePacer = new FramePacer();
+  private readonly frameTimingWindow = new FrameTimingWindow();
   private smoothedRotation = Math.PI;
   private jumpHeight = 0;
   private jumpVelocity = 0;
@@ -1012,6 +1297,7 @@ export class PortfolioGame {
   private worldCollapseFrame: WorldCollapseFrame | null = null;
   private worldCollapsePromise: Promise<ZoneId> | null = null;
   private worldCollapseResolve: ((zone: ZoneId) => void) | null = null;
+  private worldCollapseReject: ((reason?: unknown) => void) | null = null;
   private worldCollapseCollisionReleased = false;
   private worldCollapseFarewellSent = false;
   private worldCollapseAchievementSent = false;
@@ -1042,7 +1328,7 @@ export class PortfolioGame {
         interaction?.position.set(x, 0, z);
       },
       addSurface: (surface) => {
-        this.surfaceAreas.push(surface);
+        this.addSurfaceArea(surface, true);
       },
       addAnimatedItem: (item) => {
         this.animatedItems.push(item);
@@ -1121,6 +1407,42 @@ export class PortfolioGame {
       isPlayerLocked: () => this.isIgnitionPanicActive(),
       isWorldCollapseActive: () => this.worldCollapse !== null,
       isReducedMotion: () => this.reduceMotion,
+      getQuality: () => this.quality,
+    });
+    this.gridServerPatchPuzzle = new GridServerPatchPuzzle({
+      materials: this.materials,
+      colors: palette,
+      registerKickable: (
+        object,
+        radius,
+        restingY,
+        gravity,
+        friction,
+        message,
+      ) =>
+        this.registerKickable(
+          object,
+          radius,
+          restingY,
+          null,
+          gravity,
+          null,
+          friction,
+          message,
+        ),
+      addInteraction: (...args) => {
+        this.addInteraction(...args);
+      },
+      getHeldKickable: () => this.heldKickable,
+      onStatus: (message, options) => {
+        this.hooks.onStatus(message, options);
+      },
+      onComplete: () => {
+        this.triggerServerRackFlicker("surge");
+      },
+      hasAchievement: (title) => this.hooks.hasAchievement(title),
+      getElapsed: () => this.elapsed,
+      isReducedMotion: () => this.reduceMotion,
     });
     this.hanoiPuzzle = new HanoiPuzzle({
       materials: this.materials,
@@ -1130,7 +1452,7 @@ export class PortfolioGame {
         this.addStaticBox(...args);
       },
       addSurface: (surface) => {
-        this.surfaceAreas.push(surface);
+        this.addSurfaceArea(surface, true);
       },
       addInteraction: (id, label, x, z, radius, action) => {
         this.addInteraction(id, label, x, z, radius, action);
@@ -1306,6 +1628,9 @@ export class PortfolioGame {
       onStatus: (message, options) => {
         this.hooks.onStatus(message, options);
       },
+      onPortalBeam: () => {
+        this.portalNetwork.pulseDestination("field", 1.62);
+      },
       setPointerReachTarget: (target, until) => {
         this.pointerActionReachTarget = target;
         this.pointerActionReachUntil = until;
@@ -1328,12 +1653,11 @@ export class PortfolioGame {
       addRemovableStaticBox: (...args) => {
         const collider = this.addStaticBox(...args);
         return () => {
-          const index = this.staticColliders.indexOf(collider);
-          if (index >= 0) this.staticColliders.splice(index, 1);
+          this.removeStaticCollider(collider);
         };
       },
       addSurface: (surface) => {
-        this.surfaceAreas.push(surface);
+        this.addSurfaceArea(surface);
       },
       addAnimatedItem: (item) => {
         this.animatedItems.push(item);
@@ -1354,6 +1678,8 @@ export class PortfolioGame {
       cancelKickableHold: (kickable) => {
         this.cancelTelekinesisHold(kickable);
       },
+      recallFlyingFishMagic: (...args) =>
+        this.recallFlyingFishMagic(...args),
       settleFlyingFishSchools: () => this.settleFlyingFishSchools(),
       surfaceContainsPoint: (...args) =>
         this.surfaceContainsPoint(...args),
@@ -1438,10 +1764,15 @@ export class PortfolioGame {
       this.decorativeGroup,
       this.collisionDebugGroup,
     );
+    this.clickNavigationMarker = new ClickNavigationMarker(this.scene);
     this.ambientGrid = new AmbientGrid(this.scene);
 
-    const hemisphere = new THREE.HemisphereLight(0x7ac5d1, 0x101412, 1.7);
-    this.scene.add(hemisphere);
+    this.hemisphere = new THREE.HemisphereLight(
+      0x7ac5d1,
+      0x101412,
+      1.7,
+    );
+    this.scene.add(this.hemisphere);
     this.ambientFill = new THREE.AmbientLight(0x8fc6ca, 0);
     this.scene.add(this.ambientFill);
 
@@ -1523,11 +1854,15 @@ export class PortfolioGame {
 
     this.input.connect();
     document.addEventListener("visibilitychange", this.handleVisibility);
+    window.addEventListener("blur", this.handleWindowBlur);
+    window.addEventListener("focus", this.handleWindowFocus);
     this.canvas.addEventListener("pointerdown", this.handleTelekinesisDown);
     this.canvas.addEventListener("pointermove", this.handleTelekinesisMove);
     this.canvas.addEventListener("pointerup", this.handleTelekinesisUp);
     this.canvas.addEventListener("pointercancel", this.handleTelekinesisUp);
     this.canvas.addEventListener("lostpointercapture", this.handleTelekinesisUp);
+    this.canvas.addEventListener("pointerenter", this.handlePointerEnter);
+    this.canvas.addEventListener("pointerleave", this.handlePointerLeave);
     this.listenersConnected = true;
     this.hooks.onSpellChange(this.spellStage, this.packetInterferenceUnlocked);
     this.hooks.onSpellCharge(0, false);
@@ -1547,7 +1882,8 @@ export class PortfolioGame {
     }
     this.running = true;
     this.previousFrame = performance.now();
-    this.lastRenderedFrame = 0;
+    this.framePacer.reset();
+    this.frameTimingWindow.reset();
     if (this.documentVisible) this.renderer.setAnimationLoop(this.frame);
   }
 
@@ -1558,14 +1894,21 @@ export class PortfolioGame {
     this.completePortablePencilEquipFlight(false);
     this.disposed = true;
     this.running = false;
+    this.cancelWorldCollapsePromise(
+      new Error("The world runtime was disposed before the Event Horizon completed."),
+    );
     if (this.renderer) this.renderer.setAnimationLoop(null);
     this.resizeObserver.disconnect();
     if (this.listenersConnected) {
       document.removeEventListener("visibilitychange", this.handleVisibility);
+      window.removeEventListener("blur", this.handleWindowBlur);
+      window.removeEventListener("focus", this.handleWindowFocus);
       this.canvas.removeEventListener("pointerdown", this.handleTelekinesisDown);
       this.canvas.removeEventListener("pointermove", this.handleTelekinesisMove);
       this.canvas.removeEventListener("pointerup", this.handleTelekinesisUp);
       this.canvas.removeEventListener("pointercancel", this.handleTelekinesisUp);
+      this.canvas.removeEventListener("pointerenter", this.handlePointerEnter);
+      this.canvas.removeEventListener("pointerleave", this.handlePointerLeave);
       this.canvas.removeEventListener(
         "lostpointercapture",
         this.handleTelekinesisUp,
@@ -1585,6 +1928,8 @@ export class PortfolioGame {
     this.worldCollapse?.dispose();
     this.worldCollapse = null;
     this.worldCollapseFrame = null;
+    this.clickNavigationMarker?.dispose(this.scene);
+    this.clickNavigationMarker = null;
     this.clearZone();
     this.disposeTravelingAsteroid();
     this.scene.remove(this.collisionDebugGroup);
@@ -1611,6 +1956,7 @@ export class PortfolioGame {
       this.playerIgnition.embers.geometry.dispose();
       this.playerIgnition.embers.material.map?.dispose();
       this.playerIgnition.embers.material.dispose();
+      this.playerIgnition.smoke.dispose();
       this.playerIgnition.smoke.geometry.dispose();
       this.playerIgnition.smoke.material.dispose();
       this.playerIgnition = null;
@@ -1646,6 +1992,8 @@ export class PortfolioGame {
     this.mightymaticaZone = null;
     this.ambientGrid?.dispose();
     this.ambientGrid = null;
+    this.clickNavigationMarker?.dispose(this.scene);
+    this.clickNavigationMarker = null;
     disposeObjectTree(this.scene);
     this.scene.clear();
     this.collisionDebugBlockerMaterial.dispose();
@@ -1658,6 +2006,14 @@ export class PortfolioGame {
 
   getCurrentZone(): ZoneId {
     return this.currentZone;
+  }
+
+  readGridServerTrace(): readonly string[] | null {
+    return this.gridServerPatchPuzzle.getTraceLines();
+  }
+
+  hasGridServerPayload(): boolean {
+    return this.gridServerPatchPuzzle.isComplete();
   }
 
   getQuality(): QualityTier {
@@ -1677,7 +2033,11 @@ export class PortfolioGame {
   }
 
   setReducedMotionPreference(reduced: boolean): void {
+    const previousReducedMotion = this.reduceMotion;
     this.preferReducedMotion = reduced;
+    if (this.reduceMotion !== previousReducedMotion) {
+      this.framePacer.reset();
+    }
   }
 
   isWorldCollapseActive(): boolean {
@@ -1700,6 +2060,7 @@ export class PortfolioGame {
     if (this.worldCollapsePromise) return this.worldCollapsePromise;
 
     this.cancelAtlasAutopilot(false);
+    this.cancelClickNavigation();
     this.cancelAllPointerDrags(false);
     this.pongChallenge.stopForWorldCollapse();
     this.voidTurtleRide.stopForWorldCollapse();
@@ -1730,10 +2091,19 @@ export class PortfolioGame {
     this.emitWorldCollapseStatus(
       "The satchel clasp turns inward. A black seed leaves the leather and begins teaching the world a smaller shape.",
     );
-    this.worldCollapsePromise = new Promise<ZoneId>((resolve) => {
+    this.worldCollapsePromise = new Promise<ZoneId>((resolve, reject) => {
       this.worldCollapseResolve = resolve;
+      this.worldCollapseReject = reject;
     });
     return this.worldCollapsePromise;
+  }
+
+  private cancelWorldCollapsePromise(reason: Error): void {
+    const reject = this.worldCollapseReject;
+    this.worldCollapsePromise = null;
+    this.worldCollapseResolve = null;
+    this.worldCollapseReject = null;
+    reject?.(reason);
   }
 
   hasEquippedTeleportPencil(): boolean {
@@ -1751,6 +2121,10 @@ export class PortfolioGame {
       this.worldCollapse !== null ||
       this.isIgnitionPanicActive()
     );
+  }
+
+  private isWorldPointerInteractionLocked(): boolean {
+    return !this.externalInputEnabled || this.isNavigationLocked();
   }
 
   private isIgnitionPanicActive(): boolean {
@@ -2062,6 +2436,7 @@ export class PortfolioGame {
   setInputEnabled(enabled: boolean): void {
     this.externalInputEnabled = enabled;
     if (!enabled) this.cancelAllPointerDrags();
+    if (enabled) this.clickNavigationHoverProjectionDirty = true;
     this.syncInputState();
   }
 
@@ -2081,6 +2456,7 @@ export class PortfolioGame {
     const shadowModeChanged =
       (this.quality === "low") !== (quality === "low");
     this.quality = quality;
+    if (shadowModeChanged) this.framePacer.reset();
     const dpr = window.devicePixelRatio || 1;
     const cap = quality === "low" ? 1 : quality === "medium" ? 1.25 : 1.5;
     const shadowSize = quality === "high" ? 1024 : 512;
@@ -2100,7 +2476,7 @@ export class PortfolioGame {
     // cheap uniform fill keeps dark PBR geometry legible.
     this.renderer.shadowMap.enabled = true;
     this.sunlight.castShadow = shadowsEnabled;
-    this.ambientFill.intensity = shadowsEnabled ? 0 : 0.92;
+    this.syncZoneLighting(this.currentZone);
     if (shadowsEnabled) {
       this.sunlight.shadow.mapSize.set(shadowSize, shadowSize);
     }
@@ -2119,6 +2495,13 @@ export class PortfolioGame {
       });
     }
     this.decorativeGroup.visible = quality !== "low";
+    const pointLightsVisible = quality !== "low";
+    this.lanternLight.visible = pointLightsVisible;
+    this.thunderLight.visible = pointLightsVisible;
+    for (const lease of this.fieldLanternLightLeases) {
+      lease.light.visible = pointLightsVisible;
+    }
+    this.teleportRitual.setQuality(quality);
     this.ambientGrid?.setQuality(quality);
     this.archiveOrbitPlayground.refreshQuality();
     if (this.fishSchool) {
@@ -2128,16 +2511,46 @@ export class PortfolioGame {
       );
       this.fishSchool.mesh.count = fishCount;
       this.fishSchool.aura.count = fishCount;
+      this.fishSchool.magicPoints.material.size =
+        quality === "low" ? 0.1 : 0.14;
     }
     this.voidTurtleRide.refreshQuality();
     this.setSprintDustQuality(quality);
     this.setPlayerIgnitionQuality(quality);
+    this.runeAltar?.setQuality(quality);
     this.archiveSignalPuzzle.refreshQuality();
     this.fallsRuneRitual.refreshQuality();
+    this.fallsFireflyField.setQuality(quality);
     this.pongChallenge.refreshQuality();
+    this.gridFloorTraffic.setQuality(quality);
     this.mightymaticaZone?.setQuality(quality);
     this.resize();
     this.hooks.onQualityChange(quality);
+  }
+
+  private syncZoneLighting(zone: ZoneId): void {
+    const luminousFalls = zone === "falls";
+    this.hemisphere.color.setHex(
+      luminousFalls ? 0x76aebb : 0x7ac5d1,
+    );
+    this.hemisphere.groundColor.setHex(
+      luminousFalls ? 0x201a2d : 0x101412,
+    );
+    this.hemisphere.intensity = luminousFalls ? 2 : 1.7;
+    this.sunlight.color.setHex(
+      luminousFalls ? 0xc4d5ff : 0xffd9a3,
+    );
+    this.sunlight.intensity = luminousFalls ? 2.9 : 2.8;
+    this.ambientFill.color.setHex(
+      luminousFalls ? 0x7c90af : 0x8fc6ca,
+    );
+    this.ambientFill.intensity =
+      this.quality === "low"
+        ? luminousFalls
+          ? 0.78
+          : 0.92
+        : 0;
+    this.renderer.toneMappingExposure = luminousFalls ? 1.08 : 1.06;
   }
 
   setSpeedMultiplier(multiplier: number): number {
@@ -2171,9 +2584,13 @@ export class PortfolioGame {
 
   private resetAtZoneAnchor(): void {
     this.cancelAtlasAutopilot(false);
+    this.cancelClickNavigation();
     this.cancelAllPointerDrags();
     this.cancelSpellCharge();
     const runesReset = this.fallsRuneRitual.reset(false);
+    const gridPatchReset =
+      this.currentZone === "grid" &&
+      this.gridServerPatchPuzzle.resetLooseParts();
     const compassReset = this.resetFieldCompass();
     const pencilReset = this.resetPortablePencil();
     this.resetFieldRockClusters();
@@ -2200,6 +2617,10 @@ export class PortfolioGame {
           ? this.fallsRuneRitual.isSolved()
             ? " The loose crystal cache re-knits around the awakened sockets."
             : " The fractured runes re-knit and their sequence resets."
+          : ""
+      }${
+        gridPatchReset
+          ? " Loose patch plugs and the floppy return beside their source racks."
           : ""
       }${
         compassReset
@@ -2661,6 +3082,7 @@ export class PortfolioGame {
     }
 
     this.cancelAtlasAutopilot(false);
+    this.cancelClickNavigation();
     const drawingDuration = this.reduceMotion ? 0.14 : 2.35;
     const departureDuration = this.reduceMotion ? 0.06 : 0.72;
     const moduleReady =
@@ -2735,6 +3157,7 @@ export class PortfolioGame {
   async teleport(zone: ZoneId, viaPortal = false): Promise<void> {
     if (this.isNavigationLocked()) return;
     if (!viaPortal) this.cancelAtlasAutopilot(false);
+    this.cancelClickNavigation();
     if (zone === this.currentZone) {
       this.respawn();
       return;
@@ -2764,6 +3187,7 @@ export class PortfolioGame {
   async terminalTeleport(zone: ZoneId): Promise<void> {
     if (this.isNavigationLocked()) return;
     this.cancelAtlasAutopilot(false);
+    this.cancelClickNavigation();
     if (zone === this.currentZone) {
       this.respawn();
       return;
@@ -2832,8 +3256,8 @@ export class PortfolioGame {
       !this.worldCollapseCollisionReleased
     ) {
       this.worldCollapseCollisionReleased = true;
-      this.staticColliders.length = 0;
-      this.surfaceAreas.length = 0;
+      this.clearStaticColliders();
+      this.clearSurfaceAreas();
       this.activePlatform = null;
       this.refreshCollisionDebugVisuals();
     }
@@ -2894,6 +3318,7 @@ export class PortfolioGame {
     if (frame.complete && this.worldCollapseResolve) {
       const resolve = this.worldCollapseResolve;
       this.worldCollapseResolve = null;
+      this.worldCollapseReject = null;
       resolve(this.currentZone);
     }
   }
@@ -2973,61 +3398,61 @@ export class PortfolioGame {
     const activePointerInput =
       this.spellCharging ||
       this.hasActivePointerDrag() ||
+      this.clickNavigationPress !== null ||
       this.elapsed < this.pointerActionReachUntil;
-    const targetFps =
-      this.quality === "low"
-        ? activePointerInput
-          ? 60
-          : 30
-        : this.input.isActive() ||
-            activePointerInput ||
-            this.atlasAutopilot !== null ||
-            this.jumpHeight > 0 ||
-            this.teleportRitual.active ||
-            this.terminalTraversal.active ||
-            this.compassEquipFlight !== null ||
-            this.pencilEquipFlight !== null ||
-            this.pongChallenge.isActive() ||
-            this.voidTurtleRide.isRiding() ||
-            this.heldKickable !== null ||
-            (this.sprintDustTrail?.activeCount ?? 0) > 0 ||
-            (this.playerIgnition?.exposure ?? 0) > 0.01 ||
-            (this.playerIgnition?.burnRemaining ?? 0) > 0 ||
-            (this.playerIgnition?.panicAge ?? -1) >= 0 ||
-            (this.playerIgnition?.activeEmberCount ?? 0) > 0 ||
-            (this.playerIgnition?.activeSmokeCount ?? 0) > 0 ||
-            (this.playerIgnition?.smolderRemaining ?? 0) > 0 ||
-            (this.ambientGrid?.hasActiveMotion() ?? false) ||
-            this.archiveOrbitPlayground.hasPointerDrag() ||
-            this.digitStormAge < this.digitStormDuration ||
-            this.thunderBolts.visible ||
-            this.waterfallRecoveryAge >= 0 ||
-            (this.tentState?.restBlend ?? 0) > 0.002 ||
-            this.splashBurst?.drops.visible === true ||
-            (this.runeAltar?.hasActiveMotion() ?? false) ||
-            this.archiveOrbitPlayground.hasActiveMotion() ||
-            this.archiveSignalPuzzle.hasActiveMotion() ||
-            this.fallsRuneRitual.hasActiveMotion() ||
-            this.mathCameraFrame !== null ||
-            this.serverFlickerAge < this.serverFlickerDuration ||
-            this.worldCollapse !== null ||
-            (this.legacySimulationCube?.rematerialization?.isActive ?? false) ||
-            (this.mightymaticaZone?.hasActiveMotion() ?? false)
-          ? 60
-          : 30;
-    const minimumFrameTime = 1000 / targetFps;
-    if (
-      this.lastRenderedFrame > 0 &&
-      time - this.lastRenderedFrame < minimumFrameTime - 1
-    ) {
-      return;
-    }
-    this.lastRenderedFrame = time;
+    const activeWorldMotion =
+      this.quality !== "low" &&
+      (this.input.isActive() ||
+        activePointerInput ||
+        this.atlasAutopilot !== null ||
+        this.clickNavigation !== null ||
+        this.jumpHeight > 0 ||
+        this.teleportRitual.active ||
+        this.terminalTraversal.active ||
+        this.compassEquipFlight !== null ||
+        this.pencilEquipFlight !== null ||
+        this.pongChallenge.isActive() ||
+        this.voidTurtleRide.isRiding() ||
+        this.heldKickable !== null ||
+        (this.sprintDustTrail?.activeCount ?? 0) > 0 ||
+        (this.playerIgnition?.exposure ?? 0) > 0.01 ||
+        (this.playerIgnition?.burnRemaining ?? 0) > 0 ||
+        (this.playerIgnition?.panicAge ?? -1) >= 0 ||
+        (this.playerIgnition?.activeEmberCount ?? 0) > 0 ||
+        (this.playerIgnition?.activeSmokeCount ?? 0) > 0 ||
+        (this.playerIgnition?.smolderRemaining ?? 0) > 0 ||
+        (this.ambientGrid?.hasActiveMotion() ?? false) ||
+        this.archiveOrbitPlayground.hasPointerDrag() ||
+        this.digitStormAge < this.digitStormDuration ||
+        this.thunderBolts.visible ||
+        this.waterfallRecoveryAge >= 0 ||
+        (this.tentState?.restBlend ?? 0) > 0.002 ||
+        this.splashBurst?.drops.visible === true ||
+        (this.runeAltar?.hasActiveMotion() ?? false) ||
+        this.archiveOrbitPlayground.hasActiveMotion() ||
+        this.archiveSignalPuzzle.hasActiveMotion() ||
+        this.fallsRuneRitual.hasActiveMotion() ||
+        this.portalNetwork.hasActiveMotion() ||
+        this.mathCameraFrame !== null ||
+        this.serverFlickerAge < this.serverFlickerDuration ||
+        this.worldCollapse !== null ||
+        (this.legacySimulationCube?.rematerialization?.isActive ?? false) ||
+        (this.mightymaticaZone?.hasActiveMotion() ?? false));
+    const targetFrameRate = selectTargetFrameRate(
+      this.quality === "low",
+      activePointerInput,
+      activeWorldMotion,
+    );
+    if (!this.framePacer.shouldRender(time, targetFrameRate)) return;
 
-    const delta = Math.min(0.05, Math.max(0.001, (time - this.previousFrame) / 1000));
+    const delta = Math.min(
+      0.05,
+      Math.max(0.001, (time - this.previousFrame) / 1000),
+    );
     this.previousFrame = time;
     this.elapsed += delta;
 
+    this.updateClickNavigationHold();
     this.voidTurtleRide.update(delta);
     this.teleportRitual.update(delta);
     this.updatePlayer(delta);
@@ -3037,6 +3462,7 @@ export class PortfolioGame {
     this.updateArchiveAsteroidShadow();
     this.voidTurtleRide.updateOrbiters(delta);
     this.hanoiPuzzle.update(delta, this.elapsed);
+    this.gridServerPatchPuzzle.update(delta);
     this.mightymaticaZone?.update(delta, this.elapsed);
     this.legacySimulationCube?.rematerialization?.update(delta, this.elapsed);
     this.portalNetwork.update(delta);
@@ -3045,10 +3471,12 @@ export class PortfolioGame {
     this.updateWanderingNpcs(delta);
     this.updateFishSchool(delta);
     this.fallsRuneRitual.update(delta);
+    this.fallsFireflyField.update(this.elapsed, this.reduceMotion);
     this.runeAltar?.update(delta, this.elapsed, this.reduceMotion);
     this.updateSpell(delta);
     this.updateLantern(delta);
     this.archiveSignalPuzzle.update(delta);
+    this.gridFloorTraffic.update(this.elapsed, this.reduceMotion);
     this.updateInteractions();
     this.updateAnimatedItems(delta);
     this.updateArchiveDataGlass(delta);
@@ -3065,8 +3493,9 @@ export class PortfolioGame {
     );
     this.updatePlayerOcclusionOutline();
     this.terminalTraversal.update(delta, this.elapsed);
+    this.updateClickNavigationMarker();
     this.renderScene();
-    this.updateMetrics(delta);
+    this.updateMetrics(time);
   };
 
   private renderScene(): void {
@@ -3136,7 +3565,20 @@ export class PortfolioGame {
 
   private updatePlayer(delta: number): void {
     const axes = this.input.getMovement();
-    const jumpRequested = this.input.consumeJump();
+    const manualJumpRequested = this.input.consumeJump();
+    const manualMovement =
+      Math.abs(axes.horizontal) > 0.01 ||
+      Math.abs(axes.forward) > 0.01;
+    const continuousManualOverride =
+      this.clickNavigationPress?.continuous === true &&
+      (manualMovement ||
+        this.input.isSpellHeld());
+    const guidedJumpRequested =
+      !continuousManualOverride &&
+      this.clickNavigationJumpQueued;
+    this.clickNavigationJumpQueued = false;
+    const jumpRequested =
+      manualJumpRequested || guidedJumpRequested;
     const ignitionEffect = this.playerIgnition;
     sampleIgnitionPanic(
       ignitionEffect?.panicAge ?? inactiveIgnitionPanicAge,
@@ -3161,8 +3603,7 @@ export class PortfolioGame {
       this.player.group.rotation.z = 0;
     }
     const ignitionPanic = this.ignitionPanicFrame;
-    const movementIntent =
-      Math.abs(axes.horizontal) > 0.01 || Math.abs(axes.forward) > 0.01;
+    const movementIntent = manualMovement;
     if (
       this.tentState?.resting &&
       (movementIntent || jumpRequested || this.input.isSpellHeld())
@@ -3211,6 +3652,12 @@ export class PortfolioGame {
       else this.castSpell(0.05);
     }
     const previousFeetHeight = this.surfaceOffset + this.jumpHeight;
+    const manualClickJumpStarted =
+      manualJumpRequested &&
+      !manualMovement &&
+      this.clickNavigation !== null &&
+      this.jumpHeight <= 0 &&
+      this.jumpVelocity <= 0;
     this.updateJump(
       delta,
       jumpRequested &&
@@ -3236,8 +3683,18 @@ export class PortfolioGame {
         axes,
         delta,
         movementIntent,
-        jumpRequested,
+        manualJumpRequested,
       );
+      if (!this.atlasAutopilot) {
+        this.updateClickNavigationInput(
+          axes,
+          delta,
+          movementIntent,
+          manualClickJumpStarted,
+        );
+      }
+    } else if (this.clickNavigation) {
+      this.cancelClickNavigation();
     }
     const panicMoving =
       ignitionPanic.active && ignitionPanic.movementSpeed > 0.01;
@@ -3921,6 +4378,7 @@ export class PortfolioGame {
   private setPlayerIgnitionQuality(quality: QualityTier): void {
     const effect = this.playerIgnition;
     if (!effect) return;
+    effect.fireLight.visible = quality !== "low";
     effect.activeEmberCapacity =
       quality === "low"
         ? 12
@@ -4230,6 +4688,7 @@ export class PortfolioGame {
       inwardHeading +
       (this.nextPlayerIgnitionRandom(effect) - 0.5) * 0.5;
     this.cancelAtlasAutopilot(false);
+    this.cancelClickNavigation();
     this.cancelAllPointerDrags(false);
     this.cancelSpellCharge();
     this.resetJump();
@@ -4817,12 +5276,12 @@ export class PortfolioGame {
 
   private updateJump(delta: number, requested: boolean): void {
     if (requested && this.jumpHeight <= 0) {
-      this.jumpVelocity = 7.4;
+      this.jumpVelocity = playerJumpLaunchVelocity;
       this.jumpHeight = 0.01;
     }
 
     if (this.jumpHeight <= 0 && this.jumpVelocity <= 0) return;
-    this.jumpVelocity -= 17.5 * delta;
+    this.jumpVelocity -= playerJumpGravity * delta;
     this.jumpHeight += this.jumpVelocity * delta;
 
     if (this.jumpHeight <= 0) this.resetJump();
@@ -4881,7 +5340,13 @@ export class PortfolioGame {
     z: number,
     height: number,
   ): boolean {
-    for (const surface of this.surfaceAreas) {
+    const candidates = this.surfaceAreaIndex.queryPoint(
+      x,
+      z,
+      0,
+      this.surfaceAreaCandidates,
+    );
+    for (const surface of candidates) {
       if (!this.isWithinSurfaceSupport(surface, x, z)) continue;
       if (Math.abs(surface.heightAt(x, z) - height) <= 0.045) return true;
     }
@@ -4895,7 +5360,13 @@ export class PortfolioGame {
   ): SurfaceArea | null {
     let highestSurface: SurfaceArea | null = null;
     let highestSurfaceHeight = Number.NEGATIVE_INFINITY;
-    for (const surface of this.surfaceAreas) {
+    const candidates = this.surfaceAreaIndex.queryPoint(
+      x,
+      z,
+      0,
+      this.surfaceAreaCandidates,
+    );
+    for (const surface of candidates) {
       if (
         surface.requiresJump ||
         !this.isWithinSurfaceSupport(surface, x, z)
@@ -5022,8 +5493,14 @@ export class PortfolioGame {
     surfaceFrame.previousFeetHeight = previousFeetHeight;
     surfaceFrame.descending = descending;
     surfaceFrame.grounded = grounded;
+    const surfaceCandidates = this.surfaceAreaIndex.queryPoint(
+      position.x,
+      position.z,
+      0,
+      this.surfaceAreaCandidates,
+    );
     const selectedSurfaces = selectSupportedSurfaces(
-      this.surfaceAreas,
+      surfaceCandidates,
       surfaceFrame,
       this.supportsSurface,
       this.surfaceSelection,
@@ -5128,7 +5605,13 @@ export class PortfolioGame {
     if (airborne) {
       projectedShadowOffset = terrainOffset;
       const worldFeetHeight = this.surfaceOffset + this.jumpHeight;
-      for (const candidate of this.surfaceAreas) {
+      const shadowCandidates = this.surfaceAreaIndex.queryPoint(
+        position.x,
+        position.z,
+        0,
+        this.surfaceAreaCandidates,
+      );
+      for (const candidate of shadowCandidates) {
         if (
           !this.isWithinSurfaceSupport(
             candidate,
@@ -5467,6 +5950,19 @@ export class PortfolioGame {
           motionScale;
       item.object.rotation[item.rotationAxis ?? "y"] +=
         item.rotationSpeed * delta * motionScale;
+      if (item.texture && item.textureVelocity) {
+        item.texture.offset.x =
+          (item.texture.offset.x +
+            item.textureVelocity[0] * delta * motionScale +
+            1) %
+          1;
+        item.texture.offset.y =
+          (item.texture.offset.y +
+            item.textureVelocity[1] * delta * motionScale +
+            1) %
+          1;
+        item.texture.updateMatrix();
+      }
     }
   }
 
@@ -5482,41 +5978,233 @@ export class PortfolioGame {
       0.76 + Math.sin(this.elapsed * 2.15 * motionScale) * 0.055 * motionScale;
   }
 
+  private canNpcOccupy(x: number, z: number): boolean {
+    const boundaryMargin = 0.72;
+    if (this.bounds.kind === "circle") {
+      const radius = this.bounds.radius - boundaryMargin;
+      if (x * x + z * z > radius * radius) return false;
+    } else if (
+      Math.abs(x) > this.bounds.halfWidth - boundaryMargin ||
+      Math.abs(z) > this.bounds.halfDepth - boundaryMargin
+    ) {
+      return false;
+    }
+    if (this.currentZone === "falls" && isInsideFallsRiver(x, z)) {
+      return false;
+    }
+
+    // The robe flares to roughly 0.55 units at its base. A smaller navigation
+    // radius allowed the visible hem and shoulder to enter cliff geometry
+    // while the NPC centre was still technically outside it.
+    const npcRadius = 0.58;
+    const npcTop = 2.22;
+    const candidates = this.staticColliderIndex.queryPoint(
+      x,
+      z,
+      npcRadius,
+      this.staticColliderCandidates,
+    );
+    for (const collider of candidates) {
+      if (collider.enabled === false) continue;
+      const colliderBottom = collider.y - collider.halfHeight;
+      const colliderTop = collider.y + collider.halfHeight;
+      if (colliderTop <= 0.08 || colliderBottom >= npcTop) continue;
+      if (collider.intersectsHorizontal) {
+        if (collider.intersectsHorizontal(x, z, npcRadius)) return false;
+        continue;
+      }
+      const nearestX = THREE.MathUtils.clamp(
+        x,
+        collider.x - collider.halfWidth,
+        collider.x + collider.halfWidth,
+      );
+      const nearestZ = THREE.MathUtils.clamp(
+        z,
+        collider.z - collider.halfDepth,
+        collider.z + collider.halfDepth,
+      );
+      const dx = x - nearestX;
+      const dz = z - nearestZ;
+      if (dx * dx + dz * dz < npcRadius * npcRadius) return false;
+    }
+    return true;
+  }
+
+  private moveNpcOutOfPersonalSpace(
+    npc: WanderingNpc,
+    delta: number,
+    playerDistance: number,
+    speaking: boolean,
+  ): boolean {
+    const playerFeetHeight = this.surfaceOffset + this.jumpHeight;
+    const airborneApproach =
+      (this.jumpHeight > 0.12 || Math.abs(this.jumpVelocity) > 0.4) &&
+      playerFeetHeight < 3.15;
+    const personalSpace = airborneApproach ? 1.68 : 1.24;
+    if (playerDistance >= personalSpace) return false;
+
+    let awayX: number;
+    let awayZ: number;
+    if (playerDistance > 0.001) {
+      awayX =
+        (npc.group.position.x - this.playerPosition.x) / playerDistance;
+      awayZ =
+        (npc.group.position.z - this.playerPosition.z) / playerDistance;
+    } else {
+      // If the player lands exactly on the NPC centre, continue through the
+      // avatar's heading instead of choosing a visibly arbitrary escape side.
+      awayX = Math.sin(this.smoothedRotation);
+      awayZ = Math.cos(this.smoothedRotation);
+    }
+
+    const urgency = THREE.MathUtils.clamp(
+      (personalSpace - playerDistance) / personalSpace,
+      0.18,
+      1,
+    );
+    const retreatSpeed =
+      (this.reduceMotion ? 3.8 : 5.2) + urgency * 1.6;
+    const step = Math.min(
+      personalSpace - playerDistance + 0.055,
+      retreatSpeed * delta,
+    );
+    const previousX = npc.group.position.x;
+    const previousZ = npc.group.position.z;
+    // Direct retreat is preferred. The angled fallbacks let an NPC slide
+    // around a tree, console, or court prop instead of freezing against it.
+    const candidateAngles = [0, 0.52, -0.52, 1.02, -1.02] as const;
+    for (const angle of candidateAngles) {
+      const cosine = Math.cos(angle);
+      const sine = Math.sin(angle);
+      const directionX = awayX * cosine - awayZ * sine;
+      const directionZ = awayX * sine + awayZ * cosine;
+      const nextX = previousX + directionX * step;
+      const nextZ = previousZ + directionZ * step;
+      if (!this.canNpcOccupy(nextX, nextZ)) continue;
+
+      npc.group.position.x = nextX;
+      npc.group.position.z = nextZ;
+      // Personal-space movement displaces the body, never its home. Once the
+      // player clears the area, the ordinary ellipse guides this NPC back.
+      npc.group.rotation.y = speaking
+        ? Math.atan2(
+            this.playerPosition.x - nextX,
+            this.playerPosition.z - nextZ,
+          )
+        : Math.atan2(directionX, directionZ);
+      return true;
+    }
+    return false;
+  }
+
+  private maybeEmitNpcCrowdingQuip(
+    npc: WanderingNpc,
+    playerDistance: number,
+  ): boolean {
+    const playerFeetHeight = this.surfaceOffset + this.jumpHeight;
+    const crowdedFromAbove =
+      this.jumpVelocity < -0.2 &&
+      playerFeetHeight > 0.22 &&
+      playerFeetHeight < 3.15 &&
+      playerDistance < 1.35;
+    if (!crowdedFromAbove) {
+      npc.crowdedFromAbove = false;
+      return false;
+    }
+    if (npc.crowdedFromAbove) return false;
+    npc.crowdedFromAbove = true;
+    if (
+      this.elapsed < npc.crowdingQuipCooldownUntil ||
+      npc.speechAge < npc.speechDuration ||
+      npc.crowdingQuips.length === 0
+    ) {
+      return false;
+    }
+
+    const quip =
+      npc.crowdingQuips[
+        npc.crowdingQuipIndex % npc.crowdingQuips.length
+      ];
+    if (!quip) return false;
+    npc.crowdingQuipIndex += 1;
+    npc.crowdingQuipCooldownUntil = this.elapsed + 5.5;
+    this.emitNpcSpeech(
+      npc.interactionId,
+      npc.crowdingSpeaker,
+      quip,
+    );
+    return true;
+  }
+
   private updateWanderingNpcs(delta: number): void {
     for (const npc of this.wanderingNpcs) {
       npc.speechAge = Math.min(
         npc.speechDuration,
         npc.speechAge + delta,
       );
-      const speaking = npc.speechAge < npc.speechDuration;
+      let speaking = npc.speechAge < npc.speechDuration;
       const playerDistance = Math.hypot(
         npc.group.position.x - this.playerPosition.x,
         npc.group.position.z - this.playerPosition.z,
       );
+      speaking =
+        this.maybeEmitNpcCrowdingQuip(npc, playerDistance) ||
+        speaking;
       const motionScale = this.reduceMotion ? 0.28 : 1;
-      if (playerDistance > 2.25 && !speaking) {
+      const yielding = this.moveNpcOutOfPersonalSpace(
+        npc,
+        delta,
+        playerDistance,
+        speaking,
+      );
+      if (!yielding && playerDistance > 2.25 && !speaking) {
         npc.angle += npc.speed * delta * motionScale;
-        const targetX = npc.origin.x + Math.cos(npc.angle) * npc.radiusX;
-        const targetZ = npc.origin.z + Math.sin(npc.angle * 0.86) * npc.radiusZ;
+        const targetX = npc.home.x + Math.cos(npc.angle) * npc.radiusX;
+        const targetZ = npc.home.z + Math.sin(npc.angle * 0.86) * npc.radiusZ;
         const previousX = npc.group.position.x;
         const previousZ = npc.group.position.z;
         const follow = 1 - Math.exp(-delta * 3.2);
-        npc.group.position.x = THREE.MathUtils.lerp(
-          npc.group.position.x,
+        let nextX = THREE.MathUtils.lerp(
+          previousX,
           targetX,
           follow,
         );
-        npc.group.position.z = THREE.MathUtils.lerp(
-          npc.group.position.z,
+        let nextZ = THREE.MathUtils.lerp(
+          previousZ,
           targetZ,
           follow,
         );
-        const movementX = npc.group.position.x - previousX;
-        const movementZ = npc.group.position.z - previousZ;
-        if (movementX * movementX + movementZ * movementZ > 0.000001) {
-          npc.group.rotation.y = Math.atan2(movementX, movementZ);
+        const stepX = nextX - previousX;
+        const stepZ = nextZ - previousZ;
+        const stepDistance = Math.hypot(stepX, stepZ);
+        const maximumStep =
+          delta * (this.reduceMotion ? 0.48 : 1.35);
+        if (stepDistance > maximumStep) {
+          const scale = maximumStep / stepDistance;
+          nextX = previousX + stepX * scale;
+          nextZ = previousZ + stepZ * scale;
         }
-      } else if (speaking && playerDistance > 0.01) {
+        if (this.canNpcOccupy(nextX, nextZ)) {
+          npc.group.position.x = nextX;
+          npc.group.position.z = nextZ;
+          const movementX = nextX - previousX;
+          const movementZ = nextZ - previousZ;
+          if (movementX * movementX + movementZ * movementZ > 0.000001) {
+            npc.group.rotation.y = Math.atan2(movementX, movementZ);
+          }
+        } else {
+          // Pick a stable turn direction per NPC. Reversing the phase by a
+          // fixed amount immediately gives the ellipse another candidate
+          // instead of repeatedly easing its robe into the same wall.
+          const turnDirection =
+            (npc.interactionId.length + Math.round(Math.abs(npc.home.x))) %
+                2 ===
+              0
+              ? 1
+              : -1;
+          npc.angle += turnDirection * 0.68;
+        }
+      } else if (!yielding && speaking && playerDistance > 0.01) {
         npc.group.rotation.y = Math.atan2(
           this.playerPosition.x - npc.group.position.x,
           this.playerPosition.z - npc.group.position.z,
@@ -5526,6 +6214,22 @@ export class PortfolioGame {
         Math.sin(this.elapsed * 3.1 * motionScale + npc.angle) *
         0.035 *
         motionScale;
+      const signalPhase = this.elapsed * 1.75 * motionScale + npc.angle;
+      npc.signalCrystal.position.y =
+        2.38 + Math.sin(signalPhase) * 0.075 * motionScale;
+      npc.signalCrystal.rotation.y += delta * 1.35 * motionScale;
+      npc.signalCrystal.rotation.z =
+        Math.sin(signalPhase * 0.73) * 0.16 * motionScale;
+      npc.signalAura.position.y = npc.signalCrystal.position.y;
+      npc.signalAura.rotation.x =
+        Math.PI / 2 + Math.sin(signalPhase * 0.61) * 0.13 * motionScale;
+      npc.signalAura.rotation.y =
+        Math.cos(signalPhase * 0.47) * 0.16 * motionScale;
+      npc.signalAura.scale.setScalar(
+        0.94 + Math.sin(signalPhase * 1.3) * 0.11 * motionScale,
+      );
+      npc.signalAura.material.opacity =
+        0.32 + Math.sin(signalPhase * 1.3) * 0.08 * motionScale;
       let speechHop = 0;
       if (speaking) {
         const progress = npc.speechAge / npc.speechDuration;
@@ -5563,12 +6267,17 @@ export class PortfolioGame {
     interactionId: string,
     speaker: string,
     message: string,
+    monospaceTerms?: readonly string[],
   ): void {
     const npc = this.wanderingNpcs.find(
       (candidate) => candidate.interactionId === interactionId,
     );
     if (npc) npc.speechAge = 0;
-    this.hooks.onStatus(message, { kind: "speech", speaker });
+    this.hooks.onStatus(message, {
+      kind: "speech",
+      speaker,
+      monospaceTerms,
+    });
   }
 
   private getNextAtlasRouteZone(destination: ZoneId): ZoneId | null {
@@ -5599,6 +6308,7 @@ export class PortfolioGame {
       );
       return false;
     }
+    this.cancelClickNavigation();
     if (this.tentState?.resting) this.setTentResting(false);
     const started = this.prepareAtlasAutopilot(destination);
     if (started) {
@@ -5625,7 +6335,7 @@ export class PortfolioGame {
       );
       return false;
     }
-    const path = this.findAtlasAutopilotPath(portal.position);
+    const path = this.findGuidedPath(portal.position);
     if (path.length === 0) {
       this.atlasAutopilot = null;
       this.hooks.onStatus(
@@ -5655,11 +6365,12 @@ export class PortfolioGame {
     }
   }
 
-  private isAtlasPathPointWalkable(
+  private isGuidedPathPointWalkable(
     x: number,
     z: number,
     start: THREE.Vector3,
     goal: THREE.Vector3,
+    goalClearance = 1.46,
   ): boolean {
     const boundaryMargin = this.playerRadius + 0.12;
     if (this.bounds.kind === "circle") {
@@ -5676,12 +6387,22 @@ export class PortfolioGame {
       (x - start.x) * (x - start.x) + (z - start.z) * (z - start.z);
     const goalDistanceSquared =
       (x - goal.x) * (x - goal.x) + (z - goal.z) * (z - goal.z);
-    if (startDistanceSquared < 0.72 * 0.72 || goalDistanceSquared < 1.46 * 1.46) {
+    if (
+      startDistanceSquared < 0.72 * 0.72 ||
+      goalDistanceSquared < goalClearance * goalClearance
+    ) {
       return true;
     }
 
     const padding = this.playerRadius + 0.14;
-    for (const collider of this.staticColliders) {
+    const candidates = this.staticColliderIndex.queryPoint(
+      x,
+      z,
+      padding,
+      this.staticColliderCandidates,
+    );
+    for (const collider of candidates) {
+      if (collider.enabled === false) continue;
       const top = collider.y + collider.halfHeight;
       const bottom = collider.y - collider.halfHeight;
       if (
@@ -5703,11 +6424,12 @@ export class PortfolioGame {
     return true;
   }
 
-  private hasAtlasPathLineOfSight(
+  private hasGuidedPathLineOfSight(
     from: THREE.Vector3,
     to: THREE.Vector3,
     start: THREE.Vector3,
     goal: THREE.Vector3,
+    goalClearance: number,
   ): boolean {
     const distance = from.distanceTo(to);
     const steps = Math.max(1, Math.ceil(distance / 0.28));
@@ -5715,16 +6437,30 @@ export class PortfolioGame {
       const progress = step / steps;
       const x = THREE.MathUtils.lerp(from.x, to.x, progress);
       const z = THREE.MathUtils.lerp(from.z, to.z, progress);
-      if (!this.isAtlasPathPointWalkable(x, z, start, goal)) return false;
+      if (
+        !this.isGuidedPathPointWalkable(
+          x,
+          z,
+          start,
+          goal,
+          goalClearance,
+        )
+      ) {
+        return false;
+      }
     }
     return true;
   }
 
   /**
-   * Plans only when a folio route is requested or becomes stuck. The runtime
-   * walk loop then follows this compact path, avoiding a per-frame nav solver.
+   * Plans only when a portal or clicked-surface route is requested or becomes
+   * stuck. Runtime movement follows this compact path without invoking the nav
+   * solver every frame.
    */
-  private findAtlasAutopilotPath(goalPosition: THREE.Vector3): THREE.Vector3[] {
+  private findGuidedPath(
+    goalPosition: THREE.Vector3,
+    goalClearance = 1.46,
+  ): THREE.Vector3[] {
     const start = new THREE.Vector3(
       this.playerPosition.x,
       0,
@@ -5839,7 +6575,15 @@ export class PortfolioGame {
         const neighbor = toIndex(column, row);
         if (closed[neighbor]) continue;
         const point = toPoint(neighbor);
-        if (!this.isAtlasPathPointWalkable(point.x, point.z, start, goal)) {
+        if (
+          !this.isGuidedPathPointWalkable(
+            point.x,
+            point.z,
+            start,
+            goal,
+            goalClearance,
+          )
+        ) {
           continue;
         }
         if (columnDelta !== 0 && rowDelta !== 0) {
@@ -5850,8 +6594,20 @@ export class PortfolioGame {
             toIndex(currentColumn, currentRow + rowDelta),
           );
           if (
-            !this.isAtlasPathPointWalkable(sideA.x, sideA.z, start, goal) ||
-            !this.isAtlasPathPointWalkable(sideB.x, sideB.z, start, goal)
+            !this.isGuidedPathPointWalkable(
+              sideA.x,
+              sideA.z,
+              start,
+              goal,
+              goalClearance,
+            ) ||
+            !this.isGuidedPathPointWalkable(
+              sideB.x,
+              sideB.z,
+              start,
+              goal,
+              goalClearance,
+            )
           ) {
             continue;
           }
@@ -5898,7 +6654,13 @@ export class PortfolioGame {
       let next = raw.length - 1;
       while (
         next > anchor + 1 &&
-        !this.hasAtlasPathLineOfSight(raw[anchor] ?? start, raw[next] ?? goal, start, goal)
+        !this.hasGuidedPathLineOfSight(
+          raw[anchor] ?? start,
+          raw[next] ?? goal,
+          start,
+          goal,
+          goalClearance,
+        )
       ) {
         next -= 1;
       }
@@ -5985,6 +6747,585 @@ export class PortfolioGame {
     if (route.stalledFor > 1.1) {
       this.prepareAtlasAutopilot(route.destination);
     }
+  }
+
+  private cloneClickNavigationTarget(
+    target: ClickNavigationTarget,
+  ): ClickNavigationTarget {
+    return {
+      ...target,
+      position: target.position.clone(),
+    };
+  }
+
+  private getClickNavigationTerrainFootHeight(
+    x: number,
+    z: number,
+  ): number {
+    if (this.currentZone !== "falls") return 0;
+    const onBridge =
+      Math.abs(x) < 3.9 && Math.abs(z - 2.4) < 1.52;
+    if (onBridge) return 0.42;
+    return isInsideFallsRiver(x, z) ? -0.16 : 0;
+  }
+
+  private getClickNavigationTerrainMarkerY(
+    x: number,
+    z: number,
+  ): number {
+    if (this.currentZone !== "falls") return 0.17;
+    const onBridge =
+      Math.abs(x) < 3.9 && Math.abs(z - 2.4) < 1.52;
+    if (onBridge) return 0.545;
+    return isInsideFallsRiver(x, z) ? 0.238 : 0.17;
+  }
+
+  private refreshClickNavigationTarget(
+    target: ClickNavigationTarget,
+  ): void {
+    const surface = target.surface;
+    if (!surface) {
+      target.position.y = this.getClickNavigationTerrainFootHeight(
+        target.position.x,
+        target.position.z,
+      );
+      target.markerY = this.getClickNavigationTerrainMarkerY(
+        target.position.x,
+        target.position.z,
+      );
+      return;
+    }
+    if (surface.enabled === false) {
+      target.reachable = false;
+      return;
+    }
+    target.position.x = surface.x + target.surfaceOffsetX;
+    target.position.z = surface.z + target.surfaceOffsetZ;
+    target.position.y = surface.heightAt(
+      target.position.x,
+      target.position.z,
+    );
+    target.markerY = target.position.y + 0.045;
+  }
+
+  private distanceToClickNavigationSurface(
+    target: ClickNavigationTarget,
+  ): number {
+    const surface = target.surface;
+    if (!surface) {
+      return Math.hypot(
+        target.position.x - this.playerPosition.x,
+        target.position.z - this.playerPosition.z,
+      );
+    }
+    const dx = Math.max(
+      0,
+      Math.abs(this.playerPosition.x - surface.x) -
+        surface.halfWidth,
+    );
+    const dz = Math.max(
+      0,
+      Math.abs(this.playerPosition.z - surface.z) -
+        surface.halfDepth,
+    );
+    return Math.hypot(dx, dz);
+  }
+
+  private isClickNavigationTargetPotentiallyReachable(
+    target: ClickNavigationTarget,
+  ): boolean {
+    this.refreshClickNavigationTarget(target);
+    if (!target.surface) return this.isInsidePlayableBounds(
+      target.position.x,
+      target.position.z,
+    );
+    if (target.surface.enabled === false) return false;
+
+    const currentFeetHeight =
+      this.surfaceOffset + this.jumpHeight;
+    const heightDelta = target.position.y - currentFeetHeight;
+    const directDistance =
+      this.distanceToClickNavigationSurface(target);
+    if (
+      target.surface === this.activePlatform ||
+      canGuidedJump(directDistance, heightDelta)
+    ) {
+      return true;
+    }
+
+    // A distant ledge can still be approached across ordinary terrain before
+    // the final jump. Higher parkour remains intentionally manual/stepwise:
+    // once the player reaches a nearer ledge, the same target may become
+    // reachable through the direct check above.
+    const terrainHeight = this.getClickNavigationTerrainFootHeight(
+      target.position.x,
+      target.position.z,
+    );
+    return canGuidedJump(
+      Math.min(1.05, Math.max(0.5, directDistance)),
+      target.position.y - terrainHeight,
+    );
+  }
+
+  private getClickNavigationGoalClearance(
+    target: ClickNavigationTarget,
+  ): number {
+    if (!target.surface) return 0.3;
+    return Math.min(
+      5.4,
+      Math.max(
+        1.46,
+        Math.hypot(
+          target.surface.halfWidth,
+          target.surface.halfDepth,
+        ) + 0.48,
+      ),
+    );
+  }
+
+  private beginClickNavigation(
+    sourceTarget: ClickNavigationTarget,
+  ): boolean {
+    if (
+      this.isNavigationLocked() ||
+      this.pongChallenge.isActive() ||
+      this.voidTurtleRide.isRiding()
+    ) {
+      return false;
+    }
+    const target = this.cloneClickNavigationTarget(sourceTarget);
+    target.reachable =
+      this.isClickNavigationTargetPotentiallyReachable(target);
+    this.clickNavigationHover = target;
+    if (!target.reachable) {
+      this.clickNavigation = null;
+      this.clickNavigationJumpQueued = false;
+      return false;
+    }
+
+    if (this.tentState?.resting) this.setTentResting(false);
+    this.cancelAtlasAutopilot(false);
+    const currentFeetHeight =
+      this.surfaceOffset + this.jumpHeight;
+    const heightDelta = target.position.y - currentFeetHeight;
+    const directDistance =
+      this.distanceToClickNavigationSurface(target);
+    const runupDrop =
+      this.activePlatform !== null &&
+      canGuideDropWithRunup(
+        directDistance,
+        heightDelta,
+      );
+    const directJump =
+      target.surface !== this.activePlatform &&
+      (target.surface !== null || this.activePlatform !== null) &&
+      Math.abs(heightDelta) > 0.24 &&
+      (canGuidedJump(directDistance, heightDelta) || runupDrop);
+    const goalClearance =
+      this.getClickNavigationGoalClearance(target);
+    const path = directJump
+      ? [
+          new THREE.Vector3(
+            this.playerPosition.x,
+            0,
+            this.playerPosition.z,
+          ),
+          new THREE.Vector3(
+            target.position.x,
+            0,
+            target.position.z,
+          ),
+        ]
+      : this.findGuidedPath(
+          target.position,
+          goalClearance,
+        );
+    if (path.length === 0) {
+      target.reachable = false;
+      this.clickNavigationHover = target;
+      this.clickNavigation = null;
+      this.clickNavigationJumpQueued = false;
+      return false;
+    }
+
+    const requiresJump =
+      target.surface !== this.activePlatform &&
+      (directJump ||
+        (target.surface !== null &&
+          (target.surface.requiresJump ||
+            heightDelta > 0.24)));
+    this.clickNavigation = {
+      target,
+      path,
+      waypointIndex: path.length > 1 ? 1 : 0,
+      manualOverride: false,
+      requiresJump,
+      jumpTriggered: false,
+      airborneObserved: false,
+      jumpAttempts: 0,
+      jumpDirectionX: 0,
+      jumpDirectionZ: 0,
+      plannedTarget: target.position.clone(),
+      plannedSurface: target.surface,
+      previousDistance: Number.POSITIVE_INFINITY,
+      stalledFor: 0,
+    };
+    return true;
+  }
+
+  private retargetClickNavigation(
+    sourceTarget: ClickNavigationTarget,
+  ): boolean {
+    const route = this.clickNavigation;
+    if (!route) return this.beginClickNavigation(sourceTarget);
+
+    const target = this.cloneClickNavigationTarget(sourceTarget);
+    target.reachable =
+      this.isClickNavigationTargetPotentiallyReachable(target);
+    this.clickNavigationHover = target;
+    if (!target.reachable) {
+      this.clickNavigation = null;
+      this.clickNavigationJumpQueued = false;
+      return false;
+    }
+    // A committed jump keeps one landing vector. Re-aiming it underneath a
+    // moving cursor can reverse steering in mid-air and produce oscillation.
+    if (route.jumpTriggered || this.jumpHeight > 0.02) return true;
+
+    const plannedDrift = Math.hypot(
+      target.position.x - route.plannedTarget.x,
+      target.position.z - route.plannedTarget.z,
+    );
+    if (
+      target.surface !== route.plannedSurface ||
+      plannedDrift > 0.85
+    ) {
+      return this.beginClickNavigation(target);
+    }
+
+    route.target = target;
+    const lastPathPoint = route.path.at(-1);
+    lastPathPoint?.set(
+      target.position.x,
+      0,
+      target.position.z,
+    );
+    route.previousDistance = Number.POSITIVE_INFINITY;
+    route.stalledFor = 0;
+    return true;
+  }
+
+  private cancelClickNavigation(): void {
+    this.clickNavigation = null;
+    this.clickNavigationJumpQueued = false;
+    this.clickNavigationHover = null;
+    this.clickNavigationHoverProjectionDirty = true;
+    this.clickNavigationMarker?.hide();
+  }
+
+  private failClickNavigation(
+    route: ClickNavigationState,
+  ): void {
+    route.target.reachable = false;
+    this.clickNavigation = null;
+    this.clickNavigationJumpQueued = false;
+    this.clickNavigationHover = route.target;
+  }
+
+  private updateClickNavigationInput(
+    axes: MovementAxes,
+    delta: number,
+    manualMovement: boolean,
+    manualClickJumpStarted: boolean,
+  ): void {
+    const route = this.clickNavigation;
+    if (!route || !this.externalInputEnabled || this.transitioning) {
+      return;
+    }
+    if (
+      manualMovement ||
+      this.input.isSpellHeld()
+    ) {
+      if (this.clickNavigationPress?.continuous) {
+        route.manualOverride = true;
+        route.previousDistance = Number.POSITIVE_INFINITY;
+        route.stalledFor = 0;
+        this.clickNavigationJumpQueued = false;
+        return;
+      }
+      this.cancelClickNavigation();
+      this.cancelClickNavigationPress();
+      return;
+    }
+    if (route.manualOverride) {
+      if (
+        this.jumpHeight > 0.02 ||
+        Math.abs(this.jumpVelocity) > 0.02
+      ) {
+        return;
+      }
+      this.beginClickNavigation(
+        this.clickNavigationPress?.continuous
+          ? this.clickNavigationPress.target
+          : route.target,
+      );
+      return;
+    }
+
+    this.refreshClickNavigationTarget(route.target);
+    if (
+      !route.target.reachable ||
+      route.target.surface?.enabled === false
+    ) {
+      this.failClickNavigation(route);
+      return;
+    }
+    const lastPathPoint = route.path.at(-1);
+    if (lastPathPoint) {
+      lastPathPoint.set(
+        route.target.position.x,
+        0,
+        route.target.position.z,
+      );
+    }
+
+    const grounded =
+      this.jumpHeight <= 0 && this.jumpVelocity <= 0;
+    const supportedByTarget =
+      route.target.surface === null
+        ? grounded &&
+          Math.abs(
+            this.surfaceOffset - route.target.position.y,
+          ) < 0.24
+        : route.target.surface === this.activePlatform ||
+          (grounded &&
+            this.surfaceContainsPoint(
+              route.target.surface,
+              this.playerPosition.x,
+              this.playerPosition.z,
+            ) &&
+            Math.abs(
+              this.surfaceOffset - route.target.position.y,
+            ) < 0.24);
+    if (route.requiresJump && supportedByTarget) {
+      route.requiresJump = false;
+      route.jumpTriggered = false;
+      route.airborneObserved = false;
+      route.jumpDirectionX = 0;
+      route.jumpDirectionZ = 0;
+      route.previousDistance = Number.POSITIVE_INFINITY;
+      route.stalledFor = 0;
+    }
+
+    if (route.jumpTriggered) {
+      if (this.jumpHeight > 0.02) {
+        route.airborneObserved = true;
+      } else if (route.airborneObserved && grounded) {
+        if (supportedByTarget) {
+          route.requiresJump = false;
+          route.jumpTriggered = false;
+          route.airborneObserved = false;
+        } else if (route.jumpAttempts < 2) {
+          route.jumpTriggered = false;
+          route.airborneObserved = false;
+          route.jumpDirectionX = 0;
+          route.jumpDirectionZ = 0;
+          route.stalledFor = 0;
+        } else {
+          this.failClickNavigation(route);
+          axes.horizontal = 0;
+          axes.forward = 0;
+          axes.running = false;
+          return;
+        }
+      }
+    }
+
+    const targetDx =
+      route.target.position.x - this.playerPosition.x;
+    const targetDz =
+      route.target.position.z - this.playerPosition.z;
+    const targetDistance = Math.hypot(targetDx, targetDz);
+    if (
+      manualClickJumpStarted &&
+      !route.jumpTriggered &&
+      targetDistance > 0.001
+    ) {
+      route.jumpTriggered = true;
+      route.airborneObserved = this.jumpHeight > 0.02;
+      if (route.requiresJump) route.jumpAttempts += 1;
+      route.jumpDirectionX = targetDx / targetDistance;
+      route.jumpDirectionZ = targetDz / targetDistance;
+    }
+    if (
+      !route.requiresJump &&
+      supportedByTarget &&
+      targetDistance < 0.28
+    ) {
+      axes.horizontal = 0;
+      axes.forward = 0;
+      axes.running = false;
+      this.cancelClickNavigation();
+      return;
+    }
+
+    let waypoint =
+      route.path[
+        Math.min(route.waypointIndex, route.path.length - 1)
+      ] ?? route.target.position;
+    let dx = waypoint.x - this.playerPosition.x;
+    let dz = waypoint.z - this.playerPosition.z;
+    let distance = Math.hypot(dx, dz);
+    while (
+      distance < 0.46 &&
+      route.waypointIndex < route.path.length - 1
+    ) {
+      route.waypointIndex += 1;
+      waypoint =
+        route.path[route.waypointIndex] ??
+        route.target.position;
+      dx = waypoint.x - this.playerPosition.x;
+      dz = waypoint.z - this.playerPosition.z;
+      distance = Math.hypot(dx, dz);
+      route.previousDistance = Number.POSITIVE_INFINITY;
+      route.stalledFor = 0;
+    }
+
+    if (route.requiresJump) {
+      const currentFeetHeight =
+        this.surfaceOffset + this.jumpHeight;
+      const heightDelta =
+        route.target.position.y - currentFeetHeight;
+      const jumpRange = getGuidedJumpRange(heightDelta);
+      if (jumpRange <= 0) {
+        this.failClickNavigation(route);
+        return;
+      }
+      const surfaceDistance =
+        this.distanceToClickNavigationSurface(route.target);
+      const triggerDistance = THREE.MathUtils.clamp(
+        jumpRange * 0.62,
+        0.58,
+        2.85,
+      );
+      if (
+        !route.jumpTriggered &&
+        grounded &&
+        surfaceDistance <= triggerDistance
+      ) {
+        route.jumpTriggered = true;
+        route.airborneObserved = false;
+        route.jumpAttempts += 1;
+        if (targetDistance > 0.001) {
+          route.jumpDirectionX = targetDx / targetDistance;
+          route.jumpDirectionZ = targetDz / targetDistance;
+        }
+        this.clickNavigationJumpQueued = true;
+      }
+    }
+
+    if (route.jumpTriggered) {
+      if (
+        route.airborneObserved &&
+        hasCrossedGuidedLandingPlane(
+          targetDx,
+          targetDz,
+          route.jumpDirectionX,
+          route.jumpDirectionZ,
+        )
+      ) {
+        // Once the avatar crosses the intended landing plane, descend
+        // vertically. Reversing toward the marker on every frame produces
+        // visible backtracking at the end of both guided and manual jumps.
+        dx = 0;
+        dz = 0;
+        distance = 0;
+        axes.horizontal = 0;
+        axes.forward = 0;
+        axes.running = false;
+      } else {
+        dx = targetDx;
+        dz = targetDz;
+        distance = targetDistance;
+      }
+    }
+
+    if (distance > 0.001) {
+      const directionX = dx / distance;
+      const directionZ = dz / distance;
+      axes.forward =
+        directionX * this.cameraForward.x +
+        directionZ * this.cameraForward.z;
+      axes.horizontal =
+        directionX * this.cameraRight.x +
+        directionZ * this.cameraRight.z;
+      axes.running =
+        route.jumpTriggered || targetDistance > 2.6;
+    }
+
+    if (
+      !route.jumpTriggered &&
+      distance < route.previousDistance - 0.018
+    ) {
+      route.stalledFor = 0;
+    } else if (!route.jumpTriggered) {
+      route.stalledFor += delta;
+    }
+    route.previousDistance = distance;
+    if (route.stalledFor <= 1.15) return;
+
+    const replanned = this.findGuidedPath(
+      route.target.position,
+      this.getClickNavigationGoalClearance(route.target),
+    );
+    if (replanned.length === 0) {
+      this.failClickNavigation(route);
+      return;
+    }
+    route.path = replanned;
+    route.waypointIndex = replanned.length > 1 ? 1 : 0;
+    route.plannedTarget.copy(route.target.position);
+    route.plannedSurface = route.target.surface;
+    route.previousDistance = Number.POSITIVE_INFINITY;
+    route.stalledFor = 0;
+  }
+
+  private updateClickNavigationMarker(): void {
+    this.refreshClickNavigationHoverFromPointer();
+    const heldTarget =
+      this.clickNavigationPress?.continuous === true
+        ? this.clickNavigationPress.target
+        : null;
+    const target =
+      heldTarget ??
+      this.clickNavigation?.target ??
+      this.clickNavigationHover;
+    const marker = this.clickNavigationMarker;
+    if (
+      !marker ||
+      !target ||
+      !this.externalInputEnabled ||
+      this.transitioning ||
+      this.worldCollapse !== null
+    ) {
+      marker?.hide();
+      return;
+    }
+    this.refreshClickNavigationTarget(target);
+    this.clickNavigationMarkerPosition.set(
+      target.position.x,
+      target.markerY,
+      target.position.z,
+    );
+    marker.show(
+      this.clickNavigationMarkerPosition,
+      this.clickNavigation || (heldTarget && target.reachable)
+        ? "active"
+        : target.reachable
+          ? "reachable"
+          : "blocked",
+    );
+    marker.update(this.elapsed, this.reduceMotion);
   }
 
   private raiseTelescope(rig: TelescopeRig): void {
@@ -6438,7 +7779,26 @@ export class PortfolioGame {
   }
 
   private updateServerRackFlicker(delta: number): void {
-    if (this.serverFlickerAge >= this.serverFlickerDuration) return;
+    if (this.serverFlickerAge >= this.serverFlickerDuration) {
+      for (const [rackIndex, rack] of this.serverRacks.entries()) {
+        for (const [barIndex, bar] of rack.bars.entries()) {
+          bar.visible = true;
+          bar.scale.x = this.reduceMotion
+            ? 0.92
+            : 0.78 +
+              (Math.sin(
+                this.elapsed * (1.7 + barIndex * 0.23) +
+                  rackIndex * 1.9 +
+                  barIndex * 2.4,
+              ) *
+                0.5 +
+                0.5) *
+                0.22;
+        }
+        rack.cap.scale.setScalar(1);
+      }
+      return;
+    }
     this.serverFlickerAge += delta;
     const progress = Math.min(1, this.serverFlickerAge / this.serverFlickerDuration);
     for (const [rackIndex, rack] of this.serverRacks.entries()) {
@@ -6514,7 +7874,22 @@ export class PortfolioGame {
     }
     this.updateServerRackFlicker(delta);
 
+    let nearestLantern: LanternState | null = null;
+    let secondNearestLantern: LanternState | null = null;
+    let nearestLanternDistance = Number.POSITIVE_INFINITY;
+    let secondNearestLanternDistance = Number.POSITIVE_INFINITY;
     for (const lantern of this.lanterns) {
+      const distanceToPlayer =
+        lantern.position.distanceToSquared(this.playerPosition);
+      if (distanceToPlayer < nearestLanternDistance) {
+        secondNearestLantern = nearestLantern;
+        secondNearestLanternDistance = nearestLanternDistance;
+        nearestLantern = lantern;
+        nearestLanternDistance = distanceToPlayer;
+      } else if (distanceToPlayer < secondNearestLanternDistance) {
+        secondNearestLantern = lantern;
+        secondNearestLanternDistance = distanceToPlayer;
+      }
       const lit = lantern.litUntil > this.elapsed;
       const target = lit ? 1.65 + Math.sin(this.elapsed * 8) * 0.08 : 1;
       const scale = THREE.MathUtils.lerp(
@@ -6523,6 +7898,115 @@ export class PortfolioGame {
         1 - Math.exp(-delta * 9),
       );
       lantern.light.scale.setScalar(scale);
+      const flicker =
+        0.96 +
+        Math.sin(
+          this.elapsed * (lit ? 9.4 : 4.8) +
+            lantern.position.x * 0.37 +
+            lantern.position.z * 0.21,
+        ) *
+          (lit ? 0.055 : 0.025);
+      const qualityLightScale =
+        this.quality === "low"
+          ? 0.48
+          : this.quality === "medium"
+            ? 0.78
+            : 1;
+      const targetIntensity =
+        qualityLightScale * (lit ? 5.4 : 1.85) * flicker;
+      lantern.targetLightIntensity = targetIntensity;
+      lantern.targetLightDistance = lit ? 6.6 : 4.8;
+      const poolOpacity = (lit ? 0.2 : 0.095) * qualityLightScale * flicker;
+      lantern.pool.material.uniforms.opacity!.value =
+        THREE.MathUtils.lerp(
+          Number(lantern.pool.material.uniforms.opacity!.value),
+          poolOpacity,
+          1 - Math.exp(-delta * 7),
+        );
+      const poolScale = lit ? 5.4 : 4;
+      lantern.pool.scale.setScalar(
+        THREE.MathUtils.lerp(
+          lantern.pool.scale.x,
+          poolScale,
+          1 - Math.exp(-delta * 5),
+        ),
+      );
+    }
+    this.updateFieldLanternLightPool(
+      delta,
+      nearestLantern,
+      secondNearestLantern,
+    );
+  }
+
+  private updateFieldLanternLightPool(
+    delta: number,
+    nearest: LanternState | null,
+    secondNearest: LanternState | null,
+  ): void {
+    const firstLease = this.fieldLanternLightLeases[0];
+    const secondLease = this.fieldLanternLightLeases[1];
+    if (!firstLease || !secondLease) return;
+
+    let firstTarget =
+      firstLease.lantern === nearest ||
+      firstLease.lantern === secondNearest
+        ? firstLease.lantern
+        : null;
+    let secondTarget =
+      secondLease.lantern !== firstTarget &&
+      (secondLease.lantern === nearest ||
+        secondLease.lantern === secondNearest)
+        ? secondLease.lantern
+        : null;
+
+    if (!firstTarget) {
+      firstTarget =
+        nearest !== secondTarget ? nearest : secondNearest;
+    }
+    if (!secondTarget) {
+      secondTarget =
+        nearest !== firstTarget ? nearest : secondNearest;
+    }
+
+    this.updateFieldLanternLightLease(firstLease, firstTarget, delta);
+    this.updateFieldLanternLightLease(secondLease, secondTarget, delta);
+  }
+
+  private updateFieldLanternLightLease(
+    lease: FieldLanternLightLease,
+    lantern: LanternState | null,
+    delta: number,
+  ): void {
+    const { light } = lease;
+    if (lease.lantern !== lantern) {
+      lease.lantern = lantern;
+      light.intensity = 0;
+      if (lantern) {
+        light.position.set(
+          lantern.position.x,
+          2.25,
+          lantern.position.z,
+        );
+        light.distance = lantern.targetLightDistance;
+      }
+    }
+    const pointLightsEnabled = this.quality !== "low";
+    const targetIntensity =
+      pointLightsEnabled && lantern
+        ? lantern.targetLightIntensity
+        : 0;
+    light.intensity = THREE.MathUtils.lerp(
+      light.intensity,
+      targetIntensity,
+      1 - Math.exp(-delta * 7),
+    );
+    if (lantern) {
+      light.distance = THREE.MathUtils.lerp(
+        light.distance,
+        lantern.targetLightDistance,
+        1 - Math.exp(-delta * 5),
+      );
     }
   }
 
@@ -6665,6 +8149,78 @@ export class PortfolioGame {
     }
   }
 
+  private isAncestorOf(
+    ancestor: THREE.Object3D,
+    object: THREE.Object3D,
+  ): boolean {
+    let parent = object.parent;
+    while (parent) {
+      if (parent === ancestor) return true;
+      parent = parent.parent;
+    }
+    return false;
+  }
+
+  private refreshPlayerOccluderWorldMatrices(): void {
+    const roots = this.playerOcclusionMatrixRoots;
+    roots.length = 0;
+
+    // Keep only the outermost visible registered roots. Several authored
+    // assemblies register both a parent and climbable children; refreshing
+    // the parent subtree already covers those nested registrations.
+    for (const occluder of this.playerOccluders) {
+      if (!occluder.visible) continue;
+      let coveredByExistingRoot = false;
+      for (let index = roots.length - 1; index >= 0; index -= 1) {
+        const root = roots[index];
+        if (!root) continue;
+        if (root === occluder || this.isAncestorOf(root, occluder)) {
+          coveredByExistingRoot = true;
+          break;
+        }
+        if (this.isAncestorOf(occluder, root)) {
+          for (
+            let moveIndex = index;
+            moveIndex < roots.length - 1;
+            moveIndex += 1
+          ) {
+            roots[moveIndex] = roots[moveIndex + 1]!;
+          }
+          roots.length -= 1;
+        }
+      }
+      if (!coveredByExistingRoot) roots.push(occluder);
+    }
+    if (roots.length === 0) return;
+
+    const updatedAncestors = this.playerOcclusionUpdatedAncestors;
+    const ancestorStack = this.playerOcclusionAncestorStack;
+    updatedAncestors.length = 0;
+
+    // Recompose the union of required transforms only: each shared ancestor
+    // once without descendants, then each disjoint registered root subtree.
+    // The renderer will still run its normal whole-scene matrix pass later.
+    for (const root of roots) {
+      ancestorStack.length = 0;
+      let ancestor = root.parent;
+      while (ancestor && !updatedAncestors.includes(ancestor)) {
+        ancestorStack.push(ancestor);
+        ancestor = ancestor.parent;
+      }
+      for (
+        let index = ancestorStack.length - 1;
+        index >= 0;
+        index -= 1
+      ) {
+        const pendingAncestor = ancestorStack[index];
+        if (!pendingAncestor) continue;
+        pendingAncestor.updateWorldMatrix(false, false);
+        updatedAncestors.push(pendingAncestor);
+      }
+      root.updateWorldMatrix(false, true);
+    }
+  }
+
   private updatePlayerOcclusionOutline(): void {
     this.player.group.getWorldPosition(this.playerOcclusionTarget);
     const playerBaseY = this.playerOcclusionTarget.y;
@@ -6677,15 +8233,13 @@ export class PortfolioGame {
 
     this.playerOcclusionRaycaster.camera = this.camera;
     this.playerOcclusionRaycaster.near = 0;
-    for (const occluder of this.playerOccluders) {
-      if (occluder.visible) occluder.updateWorldMatrix(true, true);
-    }
+    this.refreshPlayerOccluderWorldMatrices();
 
     let occluded = false;
     // A torso-only ray misses cases such as a tree crown hiding the head or a
     // low ledge hiding the boots. Sample the avatar vertically; scene depth
     // still decides exactly which fragments of the duplicate mesh are drawn.
-    for (const sampleHeight of [1.95, 1.25, 0.55] as const) {
+    for (const sampleHeight of playerOcclusionSampleHeights) {
       this.playerOcclusionTarget.y = playerBaseY + sampleHeight;
       const distance = this.camera.position.distanceTo(
         this.playerOcclusionTarget,
@@ -6777,8 +8331,9 @@ export class PortfolioGame {
         reveal.mesh.visible = false;
         continue;
       }
-      const dx = reveal.mesh.position.x - this.playerPosition.x;
-      const dz = reveal.mesh.position.z - this.playerPosition.z;
+      const revealPosition = reveal.position ?? reveal.mesh.position;
+      const dx = revealPosition.x - this.playerPosition.x;
+      const dz = revealPosition.z - this.playerPosition.z;
       const proximity = THREE.MathUtils.clamp(
         1 - Math.hypot(dx, dz) / reveal.range,
         0,
@@ -6941,6 +8496,38 @@ export class PortfolioGame {
     }
   }
 
+  private findSphericalSupport(
+    kickable: Kickable,
+    x: number,
+    z: number,
+  ): SurfaceArea | null {
+    let highestSurface: SurfaceArea | null = null;
+    let highestSupport = Number.NEGATIVE_INFINITY;
+    const candidates = this.surfaceAreaIndex.queryPoint(
+      x,
+      z,
+      0,
+      this.surfaceAreaCandidates,
+    );
+    for (const surface of candidates) {
+      if (
+        surface.id === "math-mind-reader-loose-orb-top" ||
+        !this.surfaceContainsPoint(surface, x, z)
+      ) {
+        continue;
+      }
+      const height = surface.heightAt(x, z);
+      if (
+        height <= kickable.object.position.y + kickable.radius + 0.18 &&
+        height > highestSupport
+      ) {
+        highestSupport = height;
+        highestSurface = surface;
+      }
+    }
+    return highestSurface;
+  }
+
   private updateKickables(delta: number, playerMoving: boolean): void {
     for (const kickable of this.kickables) {
       if (!kickable.enabled || kickable === this.heldKickable) continue;
@@ -7000,6 +8587,7 @@ export class PortfolioGame {
       let nextX = kickable.object.position.x + kickable.velocity.x * delta;
       let nextZ = kickable.object.position.z + kickable.velocity.z * delta;
       let sphericalSupport: SurfaceArea | null = null;
+      let sphericalSupportSampled = false;
       if (kickable.pinballRadius) {
         const ritualImpact =
           this.currentZone === "falls" &&
@@ -7047,23 +8635,12 @@ export class PortfolioGame {
           kickable.gravity &&
           kickable.object.userData.sphericalLooseBody === true
         ) {
-          let highestSupport = Number.NEGATIVE_INFINITY;
-          for (const surface of this.surfaceAreas) {
-            if (
-              surface.id === "math-mind-reader-loose-orb-top" ||
-              !this.surfaceContainsPoint(surface, nextX, nextZ)
-            ) {
-              continue;
-            }
-            const height = surface.heightAt(nextX, nextZ);
-            if (
-              height <= kickable.object.position.y + kickable.radius + 0.18 &&
-              height > highestSupport
-            ) {
-              highestSupport = height;
-              sphericalSupport = surface;
-            }
-          }
+          sphericalSupport = this.findSphericalSupport(
+            kickable,
+            nextX,
+            nextZ,
+          );
+          sphericalSupportSampled = true;
           kickable.object.userData.sphericalFloorY =
             sphericalSupport?.heightAt(nextX, nextZ) ?? 0.155;
         }
@@ -7122,34 +8699,12 @@ export class PortfolioGame {
       if (kickable.gravity && !kickable.onPlatform) {
         const sphericalLooseBody =
           kickable.object.userData.sphericalLooseBody === true;
-        if (sphericalLooseBody && !sphericalSupport) {
-          let highestSupport = Number.NEGATIVE_INFINITY;
-          for (const surface of this.surfaceAreas) {
-            if (
-              surface.id === "math-mind-reader-loose-orb-top" ||
-              !this.surfaceContainsPoint(
-                surface,
-                kickable.object.position.x,
-                kickable.object.position.z,
-              )
-            ) {
-              continue;
-            }
-            const height = surface.heightAt(
-              kickable.object.position.x,
-              kickable.object.position.z,
-            );
-            if (
-              height <=
-                kickable.object.position.y +
-                  kickable.radius +
-                  0.18 &&
-              height > highestSupport
-            ) {
-              highestSupport = height;
-              sphericalSupport = surface;
-            }
-          }
+        if (sphericalLooseBody && !sphericalSupportSampled) {
+          sphericalSupport = this.findSphericalSupport(
+            kickable,
+            kickable.object.position.x,
+            kickable.object.position.z,
+          );
           kickable.object.userData.sphericalFloorY =
             sphericalSupport?.heightAt(
               kickable.object.position.x,
@@ -7295,7 +8850,26 @@ export class PortfolioGame {
   }
 
   private kickableHitsStatic(kickable: Kickable, x: number, z: number): boolean {
-    for (const collider of this.staticColliders) {
+    const objectBottom = kickable.object.position.y - kickable.radius;
+    const objectTop = kickable.object.position.y + kickable.radius;
+    const candidates = this.staticColliderIndex.queryPoint(
+      x,
+      z,
+      kickable.radius,
+      this.staticColliderCandidates,
+    );
+    for (const collider of candidates) {
+      const colliderBottom = collider.y - collider.halfHeight;
+      const colliderTop = collider.y + collider.halfHeight;
+      // A pinball resting on a console or monitor is above that prop's wall
+      // volume. Treating the support as an infinite-height blocker made a
+      // deliberately placed asteroid accept a kick but remain glued in place.
+      if (
+        objectBottom >= colliderTop - 0.035 ||
+        objectTop <= colliderBottom + 0.035
+      ) {
+        continue;
+      }
       const nearestX = THREE.MathUtils.clamp(
         x,
         collider.x - collider.halfWidth,
@@ -7313,23 +8887,21 @@ export class PortfolioGame {
     return false;
   }
 
-  private updateMetrics(delta: number): void {
-    this.frameCount += 1;
-    this.metricElapsed += delta;
-    if (this.metricElapsed < 1) return;
+  private updateMetrics(time: number): void {
+    const timing = this.frameTimingWindow.recordFrame(time);
+    if (!timing) return;
 
     this.hooks.onMetrics({
-      fps: Math.round(this.frameCount / this.metricElapsed),
+      ...timing,
       drawCalls: this.renderer.info.render.calls,
       triangles: this.renderer.info.render.triangles,
     });
-    this.frameCount = 0;
-    this.metricElapsed = 0;
   }
 
   private buildZone(zone: ZoneId, arrivalFrom: ZoneId | null = null): void {
     this.clearZone();
     this.currentZone = zone;
+    this.syncZoneLighting(zone);
 
     const config = {
       field: {
@@ -7337,7 +8909,7 @@ export class PortfolioGame {
         fog: 0.015,
         spawn: new THREE.Vector3(...fieldEntrySpawn),
       },
-      falls: { sky: 0x04100f, fog: 0.019, spawn: new THREE.Vector3(-3.3, 1.05, 8.5) },
+      falls: { sky: 0x07111a, fog: 0.019, spawn: new THREE.Vector3(-3.3, 1.05, 8.5) },
       grid: { sky: 0x071216, fog: 0.0125, spawn: new THREE.Vector3(0, 1.05, 8.5) },
       archive: { sky: 0x030510, fog: 0.012, spawn: new THREE.Vector3(0, 1.05, 8.2) },
       math: { sky: 0x09051a, fog: 0.009, spawn: new THREE.Vector3(0, 1.05, 11.8) },
@@ -7388,7 +8960,9 @@ export class PortfolioGame {
     if (zone === "archive") this.buildSpaceArchive();
     if (zone === "math") this.buildMightymatica(arrivalFrom);
     if (zone === "field" && this.ambientGrid) {
-      this.surfaceAreas.push(...this.ambientGrid.getLandingSurfaces());
+      for (const surface of this.ambientGrid.getLandingSurfaces()) {
+        this.addSurfaceArea(surface, true);
+      }
     }
     this.mountTravelingAsteroidForCurrentZone();
     this.syncPlayerRenderLights();
@@ -7438,28 +9012,36 @@ export class PortfolioGame {
   }
 
   private clearZone(): void {
+    this.cancelClickNavigation();
+    this.cancelClickNavigationPress();
+    this.clickNavigationMarker?.hide();
+    this.clickNavigationVisualHits.length = 0;
+    this.clickNavigationVisualBlockers.length = 0;
     this.archiveSignalPuzzle.unmount();
     this.archiveOrbitPlayground.unmount();
     this.fallsRuneRitual.unmount();
+    this.fallsFireflyField.unmount();
     this.pongChallenge.unmount();
     this.stashTravelingAsteroidForZoneTeardown();
     this.clearCollisionDebugVisuals();
     this.stowPortablePencilForTravel();
     this.resetSprintDustTrail();
     this.hanoiPuzzle.unmount();
+    this.gridFloorTraffic.unmount();
+    this.gridServerPatchPuzzle.unmount();
     this.cancelAllPointerDrags(false);
     this.voidTurtleRide.unmount();
     this.mightymaticaZone?.dispose();
     this.mightymaticaZone = null;
     this.legacySimulationCube = null;
-    this.staticColliders.length = 0;
+    this.clearStaticColliders();
     this.interactions.length = 0;
     this.pointerActions.length = 0;
     this.mathInstanceDrags.length = 0;
     this.pointerActionReachTarget = null;
     this.pointerActionReachUntil = 0;
     this.animatedItems.length = 0;
-    this.surfaceAreas.length = 0;
+    this.clearSurfaceAreas();
     this.fieldRockClusters.length = 0;
     this.lastFieldRockDebugRefresh = 0;
     this.tentState = null;
@@ -7469,9 +9051,13 @@ export class PortfolioGame {
     this.portalNetwork.clear();
     this.telescopeRigs.length = 0;
     this.playerOccluders.length = 0;
+    this.playerOcclusionMatrixRoots.length = 0;
+    this.playerOcclusionUpdatedAncestors.length = 0;
+    this.playerOcclusionAncestorStack.length = 0;
     this.setPlayerOcclusionOutlineVisible(false);
     this.playerShadow.visible = true;
     this.lanterns.length = 0;
+    this.fieldLanternLightLeases.length = 0;
     this.lanternReveals.length = 0;
     this.serverRacks.length = 0;
     this.wanderingNpcs.length = 0;
@@ -7527,28 +9113,48 @@ export class PortfolioGame {
     );
     const fieldGroundTexture = createFieldGroundTexture();
     fieldGroundTexture.anisotropy = maximumAnisotropy;
+    const fieldGroundReliefTexture = createFieldGroundReliefTexture();
+    fieldGroundReliefTexture.anisotropy = maximumAnisotropy;
     const fieldGroundMaterial = this.materials.stone.clone();
     fieldGroundMaterial.name = "field-survey-worn-ground-material";
     fieldGroundMaterial.color.setHex(0xffffff);
     fieldGroundMaterial.map = fieldGroundTexture;
+    fieldGroundMaterial.bumpMap = fieldGroundReliefTexture;
+    fieldGroundMaterial.bumpScale = 0.055;
     fieldGroundMaterial.roughness = 0.97;
     fieldGroundMaterial.metalness = 0;
+    const fieldFoundationTexture = createFieldFoundationTexture();
+    fieldFoundationTexture.anisotropy = maximumAnisotropy;
     const fieldFoundationMaterial = this.materials.darkStone.clone();
     fieldFoundationMaterial.name = "field-foundation-material";
-    fieldFoundationMaterial.color.setHex(0x2f3c36);
+    fieldFoundationMaterial.color.setHex(0xffffff);
+    fieldFoundationMaterial.map = fieldFoundationTexture;
     fieldFoundationMaterial.emissive.setHex(0x07100d);
-    fieldFoundationMaterial.emissiveIntensity = 0.28;
+    fieldFoundationMaterial.emissiveIntensity = 0.18;
     fieldFoundationMaterial.roughness = 0.98;
+    const fieldShelfTexture = createFieldShelfTexture();
+    fieldShelfTexture.anisotropy = maximumAnisotropy;
+    const fieldShelfMaterial = this.materials.darkStone.clone();
+    fieldShelfMaterial.name = "field-outer-shelf-material";
+    fieldShelfMaterial.color.setHex(0xffffff);
+    fieldShelfMaterial.map = fieldShelfTexture;
+    fieldShelfMaterial.roughness = 0.98;
+    fieldShelfMaterial.metalness = 0;
 
-    const foundation = addCylinder(
-      root,
-      20,
-      20,
-      1.8,
-      18,
-      [0, -0.9, 0],
-      fieldFoundationMaterial,
+    // Cylinder caps and walls have different UV layouts. Keep directional
+    // strata on the vertical wall and use a seamless isotropic stone tile on
+    // the broad upper shelf instead of stretching one texture across both.
+    const foundation = new THREE.Mesh(
+      new THREE.CylinderGeometry(20, 20, 1.8, 18),
+      [
+        fieldFoundationMaterial,
+        fieldShelfMaterial,
+        fieldFoundationMaterial,
+      ],
     );
+    foundation.position.set(0, -0.9, 0);
+    foundation.receiveShadow = true;
+    root.add(foundation);
     const fieldFloor = addCylinder(
       root,
       11.5,
@@ -7713,6 +9319,7 @@ export class PortfolioGame {
       this.createRockCluster(root, x, z, this.materials.darkStone);
     }
 
+    this.createFieldLanternLightPool(root);
     for (const [x, z] of [
       [-8.5, 5.2],
       [-5, 6.5],
@@ -7730,16 +9337,144 @@ export class PortfolioGame {
   private buildLuminousFalls(): void {
     this.bounds = { kind: "circle", radius: 16.4 };
     const root = this.zoneGroup;
-
-    const foundation = addCylinder(
-      root,
-      18,
-      18,
-      1.7,
-      18,
-      [0, -0.85, 0],
-      this.materials.mossDark,
+    const maximumAnisotropy = Math.min(
+      4,
+      this.renderer.capabilities.getMaxAnisotropy(),
     );
+    const groundTexture = createFallsGroundTexture();
+    const groundReliefTexture = createFallsGroundReliefTexture();
+    const cliffTexture = createFallsCliffTexture();
+    const flowTexture = createFallsWaterTexture();
+    for (const texture of [
+      groundTexture,
+      groundReliefTexture,
+      cliffTexture,
+      flowTexture,
+    ]) {
+      texture.anisotropy = maximumAnisotropy;
+    }
+    const groundMaterial = this.materials.moss.clone();
+    groundMaterial.name = "falls-mossy-ground-material";
+    groundMaterial.color.setHex(0xffffff);
+    groundMaterial.map = groundTexture;
+    groundMaterial.bumpMap = groundReliefTexture;
+    groundMaterial.bumpScale = 0.045;
+    groundMaterial.roughness = 0.97;
+    groundMaterial.metalness = 0;
+    groundMaterial.emissive.setHex(0x0c171a);
+    groundMaterial.emissiveIntensity = 0.18;
+    const groundDarkMaterial = groundMaterial.clone();
+    groundDarkMaterial.name = "falls-mossy-outer-shelf-material";
+    groundDarkMaterial.color.setHex(0x9aab96);
+    groundDarkMaterial.bumpScale = 0.032;
+    const cliffMaterial = this.materials.stone.clone();
+    cliffMaterial.name = "falls-fractured-slate-material";
+    cliffMaterial.color.setHex(0xffffff);
+    cliffMaterial.map = cliffTexture;
+    cliffMaterial.bumpMap = cliffTexture;
+    cliffMaterial.bumpScale = 0.018;
+    cliffMaterial.roughness = 0.98;
+    cliffMaterial.metalness = 0;
+    cliffMaterial.flatShading = true;
+    cliffMaterial.vertexColors = true;
+    cliffMaterial.emissive.setHex(0x101525);
+    cliffMaterial.emissiveIntensity = 0.22;
+    const cliffDarkMaterial = cliffMaterial.clone();
+    cliffDarkMaterial.name = "falls-deep-cliff-material";
+    cliffDarkMaterial.color.setHex(0xa1aba7);
+    const rockMaterial = new THREE.MeshStandardMaterial({
+      name: "falls-grey-faceted-rock-material",
+      color: 0x7f898a,
+      emissive: 0x10151d,
+      emissiveIntensity: 0.16,
+      roughness: 0.96,
+      metalness: 0.01,
+      flatShading: true,
+    });
+    const wetRockMaterial = new THREE.MeshStandardMaterial({
+      name: "falls-wet-faceted-rock-material",
+      color: 0x465b61,
+      emissive: 0x0b2028,
+      emissiveIntensity: 0.2,
+      roughness: 0.68,
+      metalness: 0.04,
+      flatShading: true,
+    });
+    const waterMaterial = new THREE.MeshBasicMaterial({
+      name: "falls-flowing-water-material",
+      color: 0xffffff,
+      map: flowTexture,
+      transparent: true,
+      opacity: 0.78,
+      depthWrite: true,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    });
+    const foamMaterial = new THREE.ShaderMaterial({
+      name: "falls-waterfall-foam-material",
+      uniforms: {
+        flowMap: { value: flowTexture },
+        flowMapTransform: { value: flowTexture.matrix },
+        foamColor: { value: new THREE.Color(0xdffcff) },
+        opacity: { value: 0.5 },
+      },
+      vertexShader: `
+        varying vec2 foamUv;
+
+        void main() {
+          foamUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D flowMap;
+        uniform mat3 flowMapTransform;
+        uniform vec3 foamColor;
+        uniform float opacity;
+        varying vec2 foamUv;
+
+        void main() {
+          vec2 flowUv = (flowMapTransform * vec3(foamUv, 1.0)).xy;
+          vec4 flow = texture2D(flowMap, flowUv);
+          float edgeX = smoothstep(0.0, 0.18, min(foamUv.x, 1.0 - foamUv.x));
+          float edgeY = smoothstep(0.0, 0.28, min(foamUv.y, 1.0 - foamUv.y));
+          float brokenEdge = edgeX * edgeY;
+          float turbulence = 0.48 + flow.r * 0.72;
+          float alpha = brokenEdge * turbulence * opacity;
+          if (alpha < 0.008) discard;
+          gl_FragColor = vec4(foamColor * (0.72 + flow.g * 0.5), alpha);
+        }
+      `,
+      transparent: true,
+      depthTest: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    });
+    const visuals: FallsVisualMaterials = {
+      ground: groundMaterial,
+      groundDark: groundDarkMaterial,
+      cliff: cliffMaterial,
+      cliffDark: cliffDarkMaterial,
+      rock: rockMaterial,
+      wetRock: wetRockMaterial,
+      water: waterMaterial,
+      foam: foamMaterial,
+      flowTexture,
+    };
+
+    const foundation = new THREE.Mesh(
+      shadeFallsStoneGeometry(new THREE.CylinderGeometry(18, 18, 1.7, 18), 3),
+      [
+        visuals.cliffDark,
+        visuals.groundDark,
+        visuals.cliffDark,
+      ],
+    );
+    foundation.position.set(0, -0.85, 0);
+    foundation.receiveShadow = true;
+    root.add(foundation);
     const fallsFloor = addCylinder(
       root,
       14.6,
@@ -7747,20 +9482,20 @@ export class PortfolioGame {
       0.35,
       20,
       [0, -0.05, 0],
-      this.materials.moss,
+      visuals.ground,
     );
     foundation.name = "world-terrain-foundation";
     fallsFloor.name = "world-terrain-surface";
     foundation.castShadow = false;
     fallsFloor.castShadow = false;
 
-    this.createFallsRiver(root);
+    this.createFallsRiver(root, visuals);
     this.createFishSchool(root);
 
     this.createBridge(root, 0, 2.4);
-    this.createWaterfall(root, -4.5, -8, 3.6);
-    this.createWaterfall(root, 0, -9.5, 5, true);
-    this.createWaterfall(root, 4.5, -8, 3.1);
+    this.createWaterfall(root, -4.5, -8, 3.6, false, visuals);
+    this.createWaterfall(root, 0, -9.5, 5, true, visuals);
+    this.createWaterfall(root, 4.5, -8, 3.1, false, visuals);
 
     for (const [index, [x, y, z, sx, sy, sz]] of ([
       [-7, 1.35, -8, 4, 2.7, 4],
@@ -7768,20 +9503,29 @@ export class PortfolioGame {
       [-11, 0.8, -1, 2.4, 1.7, 6],
       [11, 0.8, -1, 2.4, 1.7, 6],
     ] as const).entries()) {
-      const terrace = addBox(
-        root,
-        [sx, sy, sz],
-        [x, y - 0.15, z],
-        this.materials.moss,
+      const terrace = new THREE.Mesh(
+        createLayeredCliffGeometry(
+          sx,
+          sy,
+          sz,
+          this.quality,
+          40 + index * 3.17,
+        ),
+        index % 2 === 0 ? visuals.cliff : visuals.cliffDark,
       );
+      terrace.name = `falls-layered-rock-terrace-${index}`;
+      terrace.position.set(x, y - 0.15, z);
       terrace.castShadow = false;
+      terrace.receiveShadow = true;
+      root.add(terrace);
       this.registerClimbableBox(
         terrace,
         `falls-moss-terrace-${index}`,
       );
     }
-    this.createFallsParkour(root);
+    this.createFallsParkour(root, visuals);
     this.createFallsVegetation(root);
+    this.fallsFireflyField.mount(root);
 
     const splashMaterial = new THREE.MeshBasicMaterial({
       color: palette.cyan,
@@ -7826,7 +9570,7 @@ export class PortfolioGame {
 
     this.createRuneAltar(root, 0, -4.2);
     this.addStaticBox(0, 0.7, -4.2, 1.25, 0.75, 1.25, 0.7, 0.82);
-    this.surfaceAreas.push({
+    this.addSurfaceArea({
       id: "rune-altar",
       x: 0,
       z: -4.2,
@@ -7909,6 +9653,7 @@ export class PortfolioGame {
         "I once fed it ritual. Violet fire walked the circles, yet touched no lock. A rehearsal, perhaps. Or a warning.",
         "Give ritual a second word: open. The pair forces what the stones would have you earn. I have no fondness for stolen answers.",
       ],
+      ["ritual"],
     );
 
     this.fallsRuneRitual.mount(root);
@@ -7926,6 +9671,20 @@ export class PortfolioGame {
   private buildSignalGrid(arrivalFrom: ZoneId | null): void {
     this.bounds = { kind: "square", halfWidth: 14.2, halfDepth: 12.2 };
     const root = this.zoneGroup;
+    const gridFloorTexture = createGridCircuitTexture();
+    gridFloorTexture.anisotropy = Math.min(
+      4,
+      this.renderer.capabilities.getMaxAnisotropy(),
+    );
+    const gridFloorMaterial = this.materials.gridFloor.clone();
+    gridFloorMaterial.name = "grid-etched-circuit-floor-material";
+    gridFloorMaterial.color.setHex(0xffffff);
+    gridFloorMaterial.map = gridFloorTexture;
+    gridFloorMaterial.emissive.setHex(0x164a52);
+    gridFloorMaterial.emissiveMap = gridFloorTexture;
+    gridFloorMaterial.emissiveIntensity = 0.42;
+    gridFloorMaterial.roughness = 0.78;
+    gridFloorMaterial.metalness = 0.12;
 
     const foundation = addBox(
       root,
@@ -7937,7 +9696,7 @@ export class PortfolioGame {
       root,
       [27.5, 0.16, 23.5],
       [0, 0.04, 0],
-      this.materials.gridFloor,
+      gridFloorMaterial,
     );
     foundation.name = "world-terrain-foundation";
     gridFloor.name = "world-terrain-surface";
@@ -7949,9 +9708,10 @@ export class PortfolioGame {
     const gridMaterials = Array.isArray(grid.material) ? grid.material : [grid.material];
     for (const material of gridMaterials) {
       material.transparent = true;
-      material.opacity = 0.42;
+      material.opacity = 0.27;
     }
     root.add(grid);
+    this.gridFloorTraffic.mount(root);
 
     const serverRackConfigs = [
       [-8.5, -6.5, 5.2, this.materials.cyan],
@@ -7967,6 +9727,7 @@ export class PortfolioGame {
         );
       });
     }
+    this.gridServerPatchPuzzle.mount(root);
 
     this.hanoiPuzzle.mount(root, -8.3, 7);
     this.createLegacySimulationCapsule(
@@ -8246,8 +10007,7 @@ export class PortfolioGame {
     state.orbit.material.opacity = 0.96;
     state.capsule.scale.setScalar(1.08);
     if (state.collider) {
-      const index = this.staticColliders.indexOf(state.collider);
-      if (index >= 0) this.staticColliders.splice(index, 1);
+      this.removeStaticCollider(state.collider);
       state.collider = null;
     }
     if (!state.portalRegistered) {
@@ -8296,8 +10056,7 @@ export class PortfolioGame {
       addStaticBox: (...args) => {
         const collider = this.addStaticBox(...args);
         return () => {
-          const index = this.staticColliders.indexOf(collider);
-          if (index >= 0) this.staticColliders.splice(index, 1);
+          this.removeStaticCollider(collider);
         };
       },
       addJumpSurface: (
@@ -8310,7 +10069,7 @@ export class PortfolioGame {
         landingMessage,
         onLand,
       ) => {
-        this.surfaceAreas.push({
+        this.addSurfaceArea({
           id,
           x,
           z,
@@ -8330,7 +10089,7 @@ export class PortfolioGame {
         halfDepth,
         height,
       ) => {
-        this.surfaceAreas.push({
+        this.addSurfaceArea({
           id,
           x,
           z,
@@ -8341,10 +10100,9 @@ export class PortfolioGame {
         });
       },
       registerDynamicBox: (collider) => {
-        this.staticColliders.push(collider);
+        this.addStaticCollider(collider, true);
         return () => {
-          const index = this.staticColliders.indexOf(collider);
-          if (index >= 0) this.staticColliders.splice(index, 1);
+          this.removeStaticCollider(collider);
         };
       },
       registerDynamicJumpSurface: (dynamicSurface) => {
@@ -8383,10 +10141,9 @@ export class PortfolioGame {
                 dynamicSurface.halfDepth + margin),
           heightAt: () => dynamicSurface.height,
         };
-        this.surfaceAreas.push(surface);
+        this.addSurfaceArea(surface, true);
         return () => {
-          const index = this.surfaceAreas.indexOf(surface);
-          if (index >= 0) this.surfaceAreas.splice(index, 1);
+          this.removeSurfaceArea(surface);
           if (this.activePlatform === surface) {
             this.activePlatform = null;
           }
@@ -8557,6 +10314,29 @@ export class PortfolioGame {
   private buildSpaceArchive(): void {
     this.bounds = { kind: "circle", radius: 15.2 };
     const root = this.zoneGroup;
+    const archiveFloorTexture = createArchiveFloorTexture(
+      archiveAtlasPosition.x,
+      archiveAtlasPosition.z,
+    );
+    archiveFloorTexture.anisotropy = Math.min(
+      4,
+      this.renderer.capabilities.getMaxAnisotropy(),
+    );
+    const archiveFloorTopMaterial = this.materials.darkStone.clone();
+    archiveFloorTopMaterial.name = "archive-polar-deck-top-material";
+    archiveFloorTopMaterial.color.setHex(0xffffff);
+    archiveFloorTopMaterial.map = archiveFloorTexture;
+    archiveFloorTopMaterial.emissive.setHex(0x10182f);
+    archiveFloorTopMaterial.emissiveIntensity = 0.3;
+    archiveFloorTopMaterial.roughness = 0.74;
+    archiveFloorTopMaterial.metalness = 0.22;
+    const archiveFloorEdgeMaterial = this.materials.darkStone.clone();
+    archiveFloorEdgeMaterial.name = "archive-polar-deck-edge-material";
+    archiveFloorEdgeMaterial.color.setHex(0x151d2d);
+    archiveFloorEdgeMaterial.emissive.setHex(0x050814);
+    archiveFloorEdgeMaterial.emissiveIntensity = 0.2;
+    archiveFloorEdgeMaterial.roughness = 0.9;
+    archiveFloorEdgeMaterial.metalness = 0.1;
 
     const foundation = addCylinder(
       root,
@@ -8567,15 +10347,17 @@ export class PortfolioGame {
       [0, -0.8, 0],
       this.materials.black,
     );
-    const archiveFloor = addCylinder(
-      root,
-      13.8,
-      13.8,
-      0.32,
-      20,
-      [0, -0.05, 0],
-      this.materials.darkStone,
+    const archiveFloor = new THREE.Mesh(
+      new THREE.CylinderGeometry(13.8, 13.8, 0.32, 20),
+      [
+        archiveFloorEdgeMaterial,
+        archiveFloorTopMaterial,
+        archiveFloorEdgeMaterial,
+      ],
     );
+    archiveFloor.position.set(0, -0.05, 0);
+    archiveFloor.receiveShadow = true;
+    root.add(archiveFloor);
     foundation.name = "world-terrain-foundation";
     archiveFloor.name = "world-terrain-surface";
     foundation.castShadow = false;
@@ -8680,10 +10462,41 @@ export class PortfolioGame {
   private createTent(parent: THREE.Group, x: number, z: number): TentState {
     const group = new THREE.Group();
     group.position.set(x, 0, z);
+    const canvasTexture = createFieldCanvasTexture();
+    canvasTexture.anisotropy = Math.min(
+      4,
+      this.renderer.capabilities.getMaxAnisotropy(),
+    );
+    const createFabricMaterial = (
+      name: string,
+      color: THREE.ColorRepresentation,
+      emissive: THREE.ColorRepresentation,
+    ): THREE.MeshStandardMaterial =>
+      new THREE.MeshStandardMaterial({
+        name,
+        color,
+        map: canvasTexture,
+        emissive,
+        emissiveIntensity: 0.08,
+        roughness: 0.98,
+        metalness: 0,
+      });
     const halfWidth = 2.25;
     const halfDepth = 1.7;
     const peak = 2.65;
     const doorHalfWidth = 0.66;
+    const contactShadow = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      this.materials.softShadow,
+    );
+    contactShadow.name = "survey-tent-soft-contact-shadow";
+    contactShadow.position.set(0.32, 0.142, -0.22);
+    contactShadow.rotation.x = -Math.PI / 2;
+    contactShadow.scale.set(4.85, 3.4, 1);
+    contactShadow.castShadow = false;
+    contactShadow.receiveShadow = false;
+    contactShadow.renderOrder = 1;
+    group.add(contactShadow);
     const canopyGeometry = new THREE.BufferGeometry();
     canopyGeometry.setAttribute(
       "position",
@@ -8705,6 +10518,14 @@ export class PortfolioGame {
       0x0b4d54, // front-left flap
       0x176b70, // front-right flap
     ] as const;
+    const panelUvs = new Float32Array(panelColors.length * 6);
+    for (let panel = 0; panel < panelColors.length; panel += 1) {
+      panelUvs.set([0, 0, 0.5, 1, 1, 0], panel * 6);
+    }
+    canopyGeometry.setAttribute(
+      "uv",
+      new THREE.BufferAttribute(panelUvs, 2),
+    );
     const vertexColors = new Float32Array(panelColors.length * 9);
     const panelColor = new THREE.Color();
     for (const [panel, colorHex] of panelColors.entries()) {
@@ -8724,6 +10545,7 @@ export class PortfolioGame {
     const canopyMaterial = this.materials.teal.clone();
     canopyMaterial.name = "survey-tent-panel-material";
     canopyMaterial.color.setHex(0xffffff);
+    canopyMaterial.map = canvasTexture;
     canopyMaterial.vertexColors = true;
     canopyMaterial.roughness = 0.94;
     canopyMaterial.side = THREE.DoubleSide;
@@ -8731,14 +10553,20 @@ export class PortfolioGame {
     canopyMaterial.opacity = 0.9;
     canopyMaterial.depthWrite = false;
     const canopy = new THREE.Mesh(canopyGeometry, canopyMaterial);
-    canopy.castShadow = true;
+    // Transparent tent panels otherwise enter the shadow map as one opaque
+    // triangle and cast a large black wedge across the whole station.
+    canopy.castShadow = false;
     group.add(canopy);
 
     const rug = addBox(
       group,
       [2.55, 0.06, 2.25],
       [0, 0.08, 0.05],
-      this.materials.tealDark,
+      createFabricMaterial(
+        "survey-tent-rug-material",
+        0x123d40,
+        0x031313,
+      ),
     );
     rug.castShadow = false;
 
@@ -8746,21 +10574,33 @@ export class PortfolioGame {
       group,
       [0.9, 0.18, 2.5],
       [0, 0.19, 0.5],
-      this.materials.parchment,
+      createFabricMaterial(
+        "survey-tent-bedroll-material",
+        0xb49a73,
+        0x21170d,
+      ),
     );
     bedroll.castShadow = false;
     const pillow = addBox(
       group,
       [0.68, 0.13, 0.4],
       [0, 0.33, -0.52],
-      this.materials.cyanSoft,
+      createFabricMaterial(
+        "survey-tent-pillow-material",
+        0x4b9fa2,
+        0x0b292b,
+      ),
     );
     pillow.castShadow = false;
     const blanket = addBox(
       group,
       [0.84, 0.055, 1.05],
       [0, 0.315, 0.45],
-      this.materials.amber,
+      createFabricMaterial(
+        "survey-tent-blanket-material",
+        0xd47d2d,
+        0x351607,
+      ),
     );
     blanket.castShadow = false;
     addBox(group, [0.58, 0.5, 0.58], [-0.92, 0.3, -0.5], this.materials.wood);
@@ -8897,14 +10737,31 @@ export class PortfolioGame {
       restBlend: 0,
     };
     this.tentState = state;
-    this.surfaceAreas.push(surface);
+    this.addSurfaceArea(surface);
     return state;
   }
 
   private createMapTable(parent: THREE.Group, x: number, z: number): void {
     const group = new THREE.Group();
     group.position.set(x, 0, z);
-    addBox(group, [2.3, 0.24, 1.45], [0, 1.15, 0], this.materials.wood);
+    const woodTexture = createFieldWoodTexture();
+    woodTexture.anisotropy = Math.min(
+      4,
+      this.renderer.capabilities.getMaxAnisotropy(),
+    );
+    const tableWoodMaterial = this.materials.wood.clone();
+    tableWoodMaterial.name = "field-atlas-table-weathered-wood-material";
+    tableWoodMaterial.color.setHex(0xffffff);
+    tableWoodMaterial.map = woodTexture;
+    tableWoodMaterial.roughness = 0.86;
+    tableWoodMaterial.metalness = 0.01;
+    const tabletop = addBox(
+      group,
+      [2.3, 0.24, 1.45],
+      [0, 1.15, 0],
+      tableWoodMaterial,
+    );
+    tabletop.name = "field-atlas-tabletop";
     addBox(group, [1.95, 0.05, 1.15], [0, 1.3, 0], this.materials.parchment);
     const atlasTexture = createFieldAtlasTexture(
       this.hooks.isZoneDiscovered("math"),
@@ -8935,6 +10792,20 @@ export class PortfolioGame {
     atlas.castShadow = false;
     atlas.receiveShadow = true;
     group.add(atlas);
+    for (const [size, position] of [
+      [[2.32, 0.065, 0.055], [0, 1.285, -0.7]],
+      [[2.32, 0.065, 0.055], [0, 1.285, 0.7]],
+      [[0.055, 0.065, 1.35], [-1.13, 1.285, 0]],
+      [[0.055, 0.065, 1.35], [1.13, 1.285, 0]],
+    ] as const) {
+      const edgeBand = addBox(
+        group,
+        size,
+        position,
+        this.materials.brass,
+      );
+      edgeBand.castShadow = false;
+    }
     for (const [px, pz] of [
       [-0.85, -0.5],
       [0.85, -0.5],
@@ -8945,10 +10816,39 @@ export class PortfolioGame {
         group,
         [0.16, 1.1, 0.16],
         [px, 0.55, pz],
-        this.materials.wood,
+        tableWoodMaterial,
       );
       leg.castShadow = false;
     }
+    for (const [px, pz] of [
+      [-1.02, -0.62],
+      [1.02, -0.62],
+      [-1.02, 0.62],
+      [1.02, 0.62],
+    ] as const) {
+      const rivet = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.045, 0.045, 0.035, 8),
+        this.materials.brass,
+      );
+      rivet.name = "field-atlas-table-rivet";
+      rivet.position.set(px, 1.327, pz);
+      rivet.castShadow = false;
+      group.add(rivet);
+    }
+    const longBrace = addBox(
+      group,
+      [1.78, 0.1, 0.1],
+      [0, 0.48, 0],
+      tableWoodMaterial,
+    );
+    const crossBrace = addBox(
+      group,
+      [0.1, 0.1, 1.02],
+      [0, 0.48, 0],
+      tableWoodMaterial,
+    );
+    longBrace.castShadow = false;
+    crossBrace.castShadow = false;
     parent.add(group);
 
     const tableSurface: SurfaceArea = {
@@ -8961,7 +10861,7 @@ export class PortfolioGame {
       landingMessage: "Boots on the planning table. The compass and pencils look nervous.",
       heightAt: () => 1.34,
     };
-    this.surfaceAreas.push(tableSurface);
+    this.addSurfaceArea(tableSurface);
     this.createTabletopKickables(parent, x, z, tableSurface);
   }
 
@@ -9310,12 +11210,44 @@ export class PortfolioGame {
     group.add(pole);
     const light = addBox(group, [0.42, 0.55, 0.42], [0, 2.35, 0], lightMaterial);
     light.castShadow = false;
+    const poolMaterial = this.materials.warmLightPool.clone();
+    poolMaterial.name = "field-lantern-light-pool-instance";
+    const pool = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      poolMaterial,
+    );
+    pool.name = "field-lantern-warm-ground-pool";
+    pool.position.y = 0.145;
+    pool.rotation.x = -Math.PI / 2;
+    pool.scale.setScalar(4);
+    pool.castShadow = false;
+    pool.receiveShadow = false;
+    pool.renderOrder = 1;
+    group.add(pool);
     parent.add(group);
     this.lanterns.push({
       light,
+      pool,
       position: new THREE.Vector3(x, 0, z),
       litUntil: 0,
+      targetLightIntensity: 0,
+      targetLightDistance: 4.8,
     });
+  }
+
+  private createFieldLanternLightPool(parent: THREE.Group): void {
+    for (let index = 0; index < 2; index += 1) {
+      const light = new THREE.PointLight(palette.amber, 0, 4.8, 2);
+      light.name = `field-lantern-point-light-${index + 1}`;
+      light.position.set(0, 2.25, 0);
+      light.castShadow = false;
+      light.visible = this.quality !== "low";
+      parent.add(light);
+      this.fieldLanternLightLeases.push({
+        light,
+        lantern: null,
+      });
+    }
   }
 
   private createFieldHeartSigil(parent: THREE.Group): void {
@@ -9445,7 +11377,8 @@ export class PortfolioGame {
         },
         heightAt: () => solidTop,
       };
-      this.surfaceAreas.push(surface);
+      this.addSurfaceArea(surface, true);
+      this.staticColliderIndex.markMutable(collider);
       parts.push({
         rock,
         originPosition: rock.position.clone(),
@@ -9907,15 +11840,21 @@ export class PortfolioGame {
     x: number,
     z: number,
   ): void {
+    const assembly = new THREE.Group();
+    assembly.name = "field-storm-stone";
+    // The former world-space mesh was visual-only and clipped slightly into
+    // the shelf. Keep the same silhouette, but make the stone and its hidden
+    // lightning mark one physical assembly so telekinesis cannot leave the
+    // clue behind.
+    assembly.position.set(x, 0.53, z);
     const stone = new THREE.Mesh(
       new THREE.DodecahedronGeometry(0.62, 0),
       this.materials.darkStone,
     );
-    stone.position.set(x, 0.38, z);
     stone.scale.set(1, 0.62, 0.86);
     stone.rotation.set(0.08, 0.42, -0.06);
     stone.castShadow = false;
-    parent.add(stone);
+    assembly.add(stone);
 
     const boltShape = new THREE.Shape();
     boltShape.moveTo(-0.1, 0.56);
@@ -9936,13 +11875,29 @@ export class PortfolioGame {
         side: THREE.DoubleSide,
       }),
     );
-    bolt.position.set(x, 0.775, z);
+    bolt.position.set(0, 0.245, 0);
     bolt.rotation.set(-Math.PI / 2, 0, 0.18);
     bolt.scale.setScalar(0.68);
     bolt.visible = false;
     bolt.renderOrder = 4;
-    parent.add(bolt);
-    this.lanternReveals.push({ mesh: bolt, range: 6.4 });
+    assembly.add(bolt);
+    parent.add(assembly);
+
+    this.registerKickable(
+      assembly,
+      0.58,
+      0.145,
+      null,
+      true,
+      fieldRockFallRadius,
+      0.988,
+      "",
+    );
+    this.lanternReveals.push({
+      mesh: bolt,
+      range: 6.4,
+      position: assembly.position,
+    });
   }
 
   private syncLooseToolInteraction(kickable: Kickable): void {
@@ -10047,6 +12002,46 @@ export class PortfolioGame {
     aura.frustumCulled = false;
     aura.renderOrder = 5;
     parent.add(aura);
+
+    const magicPositions = new Float32Array(
+      maximumFishMagicParticleCount * 3,
+    );
+    const magicColors = new Float32Array(
+      maximumFishMagicParticleCount * 3,
+    );
+    const magicGeometry = new THREE.BufferGeometry();
+    const magicPositionAttribute = new THREE.BufferAttribute(
+      magicPositions,
+      3,
+    );
+    magicPositionAttribute.setUsage(THREE.DynamicDrawUsage);
+    magicGeometry.setAttribute("position", magicPositionAttribute);
+    const magicColorAttribute = new THREE.BufferAttribute(
+      magicColors,
+      3,
+    );
+    magicColorAttribute.setUsage(THREE.DynamicDrawUsage);
+    magicGeometry.setAttribute("color", magicColorAttribute);
+    magicGeometry.setDrawRange(0, 0);
+    const magicPoints = new THREE.Points(
+      magicGeometry,
+      new THREE.PointsMaterial({
+        size: this.quality === "low" ? 0.1 : 0.14,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.94,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        sizeAttenuation: true,
+        fog: false,
+      }),
+    );
+    magicPoints.name = "flying-fish-returning-magic";
+    magicPoints.visible = false;
+    magicPoints.frustumCulled = false;
+    magicPoints.renderOrder = 7;
+    parent.add(magicPoints);
+
     const flyingCount = Math.min(
       maximumFlyingFishSchools,
       this.fallsFlyingFishSchoolColors.length,
@@ -10060,6 +12055,10 @@ export class PortfolioGame {
     const school: FishSchool = {
       mesh,
       aura,
+      magicPoints,
+      magicPositions,
+      magicColors,
+      magicRecalls: [],
       dummy: new THREE.Object3D(),
       positions: Array.from(
         { length: maximumCount },
@@ -10176,6 +12175,9 @@ export class PortfolioGame {
     school.aura.count = renderCount;
     school.aura.visible = school.flyingCount > 0;
     const motionTime = this.elapsed * (this.reduceMotion ? 0.28 : 1);
+    for (const recall of school.magicRecalls) {
+      recall.age = Math.min(recall.duration, recall.age + delta);
+    }
     school.spellSwarmAge = Math.min(
       school.spellSwarmDuration,
       school.spellSwarmAge + delta,
@@ -10231,6 +12233,7 @@ export class PortfolioGame {
       let travelX = waterDirectionX;
       let travelY = 0;
       let travelZ = waterDirectionZ;
+      let recallProgress = -1;
       if (
         !flying &&
         baitShard &&
@@ -10324,9 +12327,57 @@ export class PortfolioGame {
           flightDirectionZ,
           flightBlend,
         );
+        const recall = school.magicRecalls.find(
+          (candidate) => candidate.schoolIndex === schoolIndex,
+        );
+        const origin = recall?.origins[member];
+        const waterTarget = recall?.waterTargets[member];
+        if (recall && origin && waterTarget) {
+          recallProgress = THREE.MathUtils.clamp(
+            recall.age / recall.duration,
+            0,
+            1,
+          );
+          const fall = THREE.MathUtils.smoothstep(
+            recallProgress,
+            0.26,
+            0.94,
+          );
+          const remainingMagic =
+            1 -
+            THREE.MathUtils.smoothstep(
+              recallProgress,
+              0.02,
+              0.54,
+            );
+          const wobble =
+            Math.sin(
+              recallProgress * Math.PI * 9 +
+                member * 1.47,
+            ) *
+            0.18 *
+            remainingMagic;
+          school.dummy.position.set(
+            THREE.MathUtils.lerp(origin.x, waterTarget.x, fall) +
+              wobble,
+            THREE.MathUtils.lerp(origin.y, waterTarget.y, fall) +
+              Math.sin(fall * Math.PI) * 0.32 +
+              Math.cos(
+                recallProgress * Math.PI * 11 + member,
+              ) *
+                0.1 *
+                remainingMagic,
+            THREE.MathUtils.lerp(origin.z, waterTarget.z, fall) -
+              wobble * 0.72,
+          );
+          travelX = waterTarget.x - origin.x;
+          travelY = waterTarget.y - origin.y;
+          travelZ = waterTarget.z - origin.z;
+        }
       }
       let spellSwarmBlend = 0;
       if (
+        recallProgress < 0 &&
         spellSwarmEnvelope > 0 &&
         school.spellSwarmRadius > 0
       ) {
@@ -10400,17 +12451,47 @@ export class PortfolioGame {
           ? Math.sin(motionTime * 0.9 + index) * 0.12 * flightBlend
           : 0,
       );
+      if (recallProgress >= 0) {
+        const flop = THREE.MathUtils.smoothstep(
+          recallProgress,
+          0.28,
+          0.9,
+        );
+        school.dummy.rotation.x +=
+          Math.sin(recallProgress * Math.PI * 5 + index) *
+          (1 - flop) *
+          0.34;
+        school.dummy.rotation.z += flop * Math.PI * 0.47;
+      }
       const scale = 0.72 + (index % 4) * 0.1;
-      school.dummy.scale.setScalar(scale);
+      const returnFade =
+        recallProgress < 0
+          ? 1
+          : 1 -
+            THREE.MathUtils.smoothstep(
+              recallProgress,
+              0.88,
+              1,
+            );
+      school.dummy.scale.setScalar(scale * returnFade);
       school.dummy.updateMatrix();
       school.mesh.setMatrixAt(index, school.dummy.matrix);
       school.positions[index]?.copy(school.dummy.position);
       if (flying) {
         school.dummy.scale.setScalar(
           scale *
+            returnFade *
             (1.22 +
               Math.sin(motionTime * 2.7 + index * 1.4) * 0.12 +
-              spellSwarmBlend * 0.18),
+              spellSwarmBlend * 0.18) *
+            (recallProgress < 0
+              ? 1
+              : 1 -
+                THREE.MathUtils.smoothstep(
+                  recallProgress,
+                  0.02,
+                  0.62,
+                )),
         );
         school.dummy.updateMatrix();
         school.aura.setMatrixAt(index, school.dummy.matrix);
@@ -10424,7 +12505,307 @@ export class PortfolioGame {
     if (school.flyingCount > 0) {
       school.aura.instanceMatrix.needsUpdate = true;
     }
+    this.updateFlyingFishMagicParticles(school);
+    this.finishFlyingFishMagicRecalls(school);
     this.tryFeedFishShard(school);
+  }
+
+  private recallFlyingFishMagic(
+    target: THREE.Vector3,
+    color: THREE.Color,
+    maximumSchools: number,
+    duration: number,
+  ): number {
+    const school = this.fishSchool;
+    if (!school || maximumSchools <= 0) return 0;
+
+    const targetColor = color.getHex();
+    const motionTime = this.elapsed * (this.reduceMotion ? 0.28 : 1);
+    let recalled = 0;
+    for (
+      let schoolIndex = 0;
+      schoolIndex < this.fallsFlyingFishSchoolColors.length &&
+      recalled < maximumSchools;
+      schoolIndex += 1
+    ) {
+      if (
+        this.fallsFlyingFishSchoolColors[schoolIndex] !== targetColor ||
+        school.magicRecalls.some(
+          (candidate) => candidate.schoolIndex === schoolIndex,
+        )
+      ) {
+        continue;
+      }
+
+      const origins: THREE.Vector3[] = [];
+      const waterTargets: THREE.Vector3[] = [];
+      for (let member = 0; member < flyingFishPerShard; member += 1) {
+        const fishIndex =
+          school.waterCount +
+          schoolIndex * flyingFishPerShard +
+          member;
+        const renderedPosition = school.positions[fishIndex];
+        const origin =
+          renderedPosition && renderedPosition.lengthSq() > 0.01
+            ? renderedPosition.clone()
+            : new THREE.Vector3();
+        if (origin.lengthSq() <= 0.01) {
+          const schoolDirection = schoolIndex % 2 === 0 ? 1 : -1;
+          const angle =
+            motionTime *
+              (0.18 + (schoolIndex % 4) * 0.012) *
+              schoolDirection +
+            schoolIndex * 1.087 +
+            member * 0.075;
+          const radiusX = 6.3 + (schoolIndex % 3) * 1.05;
+          const radiusZ =
+            5.1 + ((schoolIndex + 1) % 3) * 0.92;
+          origin.set(
+            Math.cos(angle) * radiusX +
+              Math.sin(angle * 2.1 + schoolIndex * 0.4) * 1.15,
+            1.72 +
+              (schoolIndex % 3) * 0.56 +
+              (member - 2) * 0.12 +
+              Math.sin(angle * 2.3 + member * 0.52) * 0.62,
+            -1.8 +
+              Math.sin(angle) * radiusZ +
+              Math.cos(angle * 1.7 + schoolIndex * 0.32) * 0.95,
+          );
+        }
+        origins.push(origin);
+
+        const riverProgress =
+          0.18 +
+          ((schoolIndex * flyingFishPerShard + member) * 0.113) %
+            0.66;
+        const waterTarget = new THREE.Vector3();
+        const waterTangent = new THREE.Vector3();
+        fallsRiverCurve.getPointAt(riverProgress, waterTarget);
+        fallsRiverCurve.getTangentAt(
+          riverProgress,
+          waterTangent,
+        );
+        const spread = (member - 2) * 0.24;
+        waterTarget.x -= waterTangent.z * spread;
+        waterTarget.y = 0.31;
+        waterTarget.z += waterTangent.x * spread;
+        waterTargets.push(waterTarget);
+      }
+
+      school.magicRecalls.push({
+        schoolIndex,
+        target: target.clone(),
+        origins,
+        waterTargets,
+        color: color.clone(),
+        age: 0,
+        duration: Math.max(0.18, duration),
+      });
+      recalled += 1;
+    }
+    school.magicPoints.visible = school.magicRecalls.length > 0;
+    return recalled;
+  }
+
+  private updateFlyingFishMagicParticles(school: FishSchool): void {
+    let pointCount = 0;
+    for (const recall of school.magicRecalls) {
+      const progress = THREE.MathUtils.clamp(
+        recall.age / recall.duration,
+        0,
+        1,
+      );
+      const emission =
+        1 - THREE.MathUtils.smoothstep(progress, 0.7, 0.98);
+      if (emission <= 0.002) continue;
+
+      for (
+        let member = 0;
+        member < flyingFishPerShard;
+        member += 1
+      ) {
+        const fishIndex =
+          school.waterCount +
+          recall.schoolIndex * flyingFishPerShard +
+          member;
+        const start =
+          school.positions[fishIndex] ?? recall.origins[member];
+        if (!start) continue;
+        for (
+          let particle = 0;
+          particle < fishMagicParticlesPerFish;
+          particle += 1
+        ) {
+          const phase =
+            progress * 2.65 -
+            member * 0.035 -
+            particle * 0.19;
+          if (phase < 0) continue;
+          const travel = phase - Math.floor(phase);
+          const fade =
+            Math.sin(travel * Math.PI) * emission;
+          if (
+            fade <= 0.015 ||
+            pointCount >= maximumFishMagicParticleCount
+          ) {
+            continue;
+          }
+
+          const inverse = 1 - travel;
+          const lateral =
+            Math.sin(
+              travel * Math.PI * 2 +
+                member * 1.7 +
+                particle,
+            ) *
+            0.24 *
+            inverse;
+          const controlX =
+            (start.x + recall.target.x) * 0.5 +
+            Math.sin(member * 2.1 + particle) * 0.58;
+          const controlY =
+            Math.max(start.y, recall.target.y) +
+            1.05 +
+            member * 0.04;
+          const controlZ =
+            (start.z + recall.target.z) * 0.5 +
+            Math.cos(member * 1.9 + particle) * 0.58;
+          const offset = pointCount * 3;
+          school.magicPositions[offset] =
+            inverse * inverse * start.x +
+            2 * inverse * travel * controlX +
+            travel * travel * recall.target.x +
+            lateral;
+          school.magicPositions[offset + 1] =
+            inverse * inverse * start.y +
+            2 * inverse * travel * controlY +
+            travel * travel * recall.target.y;
+          school.magicPositions[offset + 2] =
+            inverse * inverse * start.z +
+            2 * inverse * travel * controlZ +
+            travel * travel * recall.target.z -
+            lateral * 0.7;
+          const whitening = travel * 0.72;
+          school.magicColors[offset] =
+            THREE.MathUtils.lerp(
+              recall.color.r,
+              1,
+              whitening,
+            ) * fade;
+          school.magicColors[offset + 1] =
+            THREE.MathUtils.lerp(
+              recall.color.g,
+              1,
+              whitening,
+            ) * fade;
+          school.magicColors[offset + 2] =
+            THREE.MathUtils.lerp(
+              recall.color.b,
+              1,
+              whitening,
+            ) * fade;
+          pointCount += 1;
+        }
+      }
+    }
+
+    school.magicPoints.geometry.setDrawRange(0, pointCount);
+    school.magicPoints.visible = pointCount > 0;
+    if (pointCount === 0) return;
+    (
+      school.magicPoints.geometry.getAttribute(
+        "position",
+      ) as THREE.BufferAttribute
+    ).needsUpdate = true;
+    (
+      school.magicPoints.geometry.getAttribute(
+        "color",
+      ) as THREE.BufferAttribute
+    ).needsUpdate = true;
+  }
+
+  private finishFlyingFishMagicRecalls(school: FishSchool): void {
+    let changed = false;
+    while (true) {
+      let recall: FlyingFishMagicRecall | null = null;
+      for (const candidate of school.magicRecalls) {
+        if (
+          candidate.age >= candidate.duration &&
+          (!recall || candidate.schoolIndex > recall.schoolIndex)
+        ) {
+          recall = candidate;
+        }
+      }
+      if (!recall) break;
+      changed = true;
+      const schoolIndex = recall.schoolIndex;
+      if (
+        schoolIndex < 0 ||
+        schoolIndex >= this.fallsFlyingFishSchoolColors.length
+      ) {
+        school.magicRecalls.splice(
+          school.magicRecalls.indexOf(recall),
+          1,
+        );
+        continue;
+      }
+      const firstFish =
+        school.waterCount + schoolIndex * flyingFishPerShard;
+      const previousFlyingCount = school.flyingCount;
+      const finalFlyingIndex =
+        school.waterCount + previousFlyingCount;
+      for (
+        let fishIndex = firstFish;
+        fishIndex < finalFlyingIndex - flyingFishPerShard;
+        fishIndex += 1
+      ) {
+        school.flightAges[fishIndex] =
+          school.flightAges[fishIndex + flyingFishPerShard] ?? 0;
+      }
+      school.flightAges.fill(
+        0,
+        finalFlyingIndex - flyingFishPerShard,
+        finalFlyingIndex,
+      );
+      school.flyingCount = Math.max(
+        0,
+        previousFlyingCount - flyingFishPerShard,
+      );
+      this.fallsFlyingFishSchoolColors.splice(schoolIndex, 1);
+      const recallIndex = school.magicRecalls.indexOf(recall);
+      if (recallIndex >= 0) {
+        school.magicRecalls.splice(recallIndex, 1);
+      }
+      for (const remaining of school.magicRecalls) {
+        if (remaining.schoolIndex > schoolIndex) {
+          remaining.schoolIndex -= 1;
+        }
+      }
+    }
+    if (!changed) return;
+
+    for (
+      let schoolIndex = 0;
+      schoolIndex < this.fallsFlyingFishSchoolColors.length;
+      schoolIndex += 1
+    ) {
+      this.colorFlyingFishSchool(
+        school,
+        schoolIndex,
+        this.fallsFlyingFishSchoolColors[schoolIndex] ?? 0xc79cff,
+      );
+    }
+    const renderCount = this.getFishRenderCount(school);
+    school.mesh.count = renderCount;
+    school.aura.count = renderCount;
+    school.aura.visible = school.flyingCount > 0;
+    school.magicPoints.visible = school.magicRecalls.length > 0;
+    if (
+      this.fallsFlyingFishSchoolColors.length <
+      maximumFlyingFishSchools
+    ) {
+      this.fallsFishFeastAnnounced = false;
+    }
   }
 
   private updateFishBaitTarget(
@@ -10436,6 +12817,7 @@ export class PortfolioGame {
       const proxy = shard.proxy;
       const kickable = shard.kickable;
       return (
+        shard.fishBaitEligible &&
         !shard.consumed &&
         proxy?.visible === true &&
         kickable?.enabled === true &&
@@ -10492,6 +12874,7 @@ export class PortfolioGame {
         const proxy = shard.proxy;
         const kickable = shard.kickable;
         if (
+          !shard.fishBaitEligible ||
           shard.consumed ||
           !proxy?.visible ||
           !kickable?.enabled ||
@@ -10589,7 +12972,10 @@ export class PortfolioGame {
     }
   }
 
-  private createFallsRiver(parent: THREE.Group): void {
+  private createFallsRiver(
+    parent: THREE.Group,
+    visuals: FallsVisualMaterials,
+  ): void {
     const createRibbon = (
       material: THREE.Material,
       y: number,
@@ -10607,32 +12993,57 @@ export class PortfolioGame {
       return ribbon;
     };
 
-    createRibbon(this.materials.mossDark, 0.145, 0.3, "falls-riverbank");
+    createRibbon(visuals.groundDark, 0.145, 0.3, "falls-riverbank");
     const water = createRibbon(
-      this.materials.water,
+      visuals.water,
       0.205,
       0,
       "falls-river-water",
     );
     water.renderOrder = 1;
+    this.animatedItems.push({
+      object: water,
+      originY: water.position.y,
+      phase: 0,
+      amplitude: 0,
+      rotationSpeed: 0,
+      texture: visuals.flowTexture,
+      textureVelocity: [0.018, -0.16],
+    });
   }
 
   private createBridge(parent: THREE.Group, x: number, z: number): void {
     const group = new THREE.Group();
     group.position.set(x, 0, z);
+    const bridgeTexture = createFallsBridgeTexture();
+    bridgeTexture.anisotropy = Math.min(
+      4,
+      this.renderer.capabilities.getMaxAnisotropy(),
+    );
+    const bridgeMaterial = this.materials.wood.clone();
+    bridgeMaterial.name = "falls-weathered-wet-bridge-material";
+    bridgeMaterial.color.setHex(0xffffff);
+    bridgeMaterial.map = bridgeTexture;
+    bridgeMaterial.emissive.setHex(0x11191a);
+    bridgeMaterial.emissiveIntensity = 0.18;
+    bridgeMaterial.roughness = 0.76;
+    bridgeMaterial.metalness = 0.04;
     for (let index = -3; index <= 3; index += 1) {
       const plank = addBox(
         group,
         [1.1, 0.28, 2.9],
         [index * 1.05, 0.38, 0],
-        this.materials.stone,
+        bridgeMaterial,
       );
       plank.castShadow = index % 2 === 0;
     }
     parent.add(group);
   }
 
-  private createFallsParkour(parent: THREE.Group): void {
+  private createFallsParkour(
+    parent: THREE.Group,
+    visuals: FallsVisualMaterials,
+  ): void {
     const ledges = [
       [10.15, -4.25, 2.25, 1.72, 0.72],
       [9.25, -5.55, 2.08, 1.65, 1.38],
@@ -10645,17 +13056,44 @@ export class PortfolioGame {
     ] as const;
 
     for (const [index, [x, z, width, depth, top]] of ledges.entries()) {
-      const slab = addBox(
-        parent,
-        [width, 0.28, depth],
-        [x, top - 0.14, z],
-        index % 2 === 0 ? this.materials.stone : this.materials.moss,
+      const slab = new THREE.Mesh(
+        createLayeredCliffGeometry(
+          width,
+          0.28,
+          depth,
+          this.quality,
+          80 + index * 2.71,
+        ),
+        index % 2 === 0 ? visuals.cliff : visuals.cliffDark,
       );
+      slab.name = `falls-layered-parkour-ledge-${index}`;
+      slab.position.set(x, top - 0.14, z);
       slab.castShadow = false;
+      slab.receiveShadow = true;
+      parent.add(slab);
+      const mossCap = new THREE.Mesh(
+        new THREE.CircleGeometry(1, 8),
+        visuals.ground,
+      );
+      mossCap.name = `falls-parkour-moss-cap-${index}`;
+      mossCap.position.set(
+        x + (index % 2 === 0 ? 0.08 : -0.06),
+        top + 0.008,
+        z,
+      );
+      mossCap.rotation.x = -Math.PI / 2;
+      mossCap.rotation.z = index * 0.71;
+      mossCap.scale.set(width * 0.42, depth * 0.37, 1);
+      mossCap.castShadow = false;
+      mossCap.receiveShadow = true;
+      parent.add(mossCap);
       const rootRadius = Math.min(width, depth) * 0.42;
       const root = new THREE.Mesh(
-        new THREE.DodecahedronGeometry(rootRadius, 0),
-        this.materials.mossDark,
+        shadeFallsStoneGeometry(
+          new THREE.DodecahedronGeometry(rootRadius, 0),
+          100 + index,
+        ),
+        index % 3 === 0 ? visuals.groundDark : visuals.cliffDark,
       );
       root.position.set(
         x + (index % 2 === 0 ? -0.08 : 0.08),
@@ -10699,35 +13137,43 @@ export class PortfolioGame {
   }
 
   private createFallsVegetation(parent: THREE.Group): void {
+    const glowberryPositions: THREE.Vector3[] = [];
+    const glowberryColors: THREE.Color[] = [];
+    const glowberryStemPositions: number[] = [];
     const trees = [
       [-12.1, -8.8, 1.08],
       [12.05, -9.05, 1.02],
       [-12.55, 5.15, 0.96],
-      [12.35, 5.45, 1.06],
+      [13.45, 4.55, 0.9],
       [-9.8, 9.85, 1.02],
-      [9.9, 9.65, 0.94],
+      // The cache at (8.4, 6.3) is a visual landmark. Keep this crown behind
+      // the NPC grove instead of letting it fill the cache's camera silhouette.
+      [13.35, -0.4, 0.86],
       [-4.9, 12.2, 0.88],
-      [4.95, 12.05, 0.92],
+      // Keep the return threshold's aperture and camera silhouette clear.
+      // This tree formerly sat directly behind its ring at (0, 11.2).
+      [4.65, 12.85, 0.82],
       [-13.05, -1.5, 0.9],
-      [13, -1.35, 0.94],
+      [-9.15, -11.35, 0.84],
     ] as const;
     const treeCount =
       this.quality === "low" ? 6 : this.quality === "medium" ? 8 : trees.length;
     for (const [index, [x, z, scale]] of trees.slice(0, treeCount).entries()) {
+      const treeScale = scale * 2.08;
       const group = new THREE.Group();
       group.position.set(x, 0, z);
       group.rotation.y = index * 0.73;
 
       const trunk = new THREE.Mesh(
         new THREE.CylinderGeometry(
-          0.16 * scale,
-          0.27 * scale,
-          1.85 * scale,
+          0.16 * treeScale,
+          0.27 * treeScale,
+          1.85 * treeScale,
           6,
         ),
         this.materials.wood,
       );
-      trunk.position.y = 0.92 * scale;
+      trunk.position.y = 0.92 * treeScale;
       trunk.rotation.z = (index % 2 === 0 ? -1 : 1) * 0.055;
       trunk.castShadow = false;
       trunk.receiveShadow = true;
@@ -10735,16 +13181,16 @@ export class PortfolioGame {
 
       const branch = new THREE.Mesh(
         new THREE.CylinderGeometry(
-          0.07 * scale,
-          0.11 * scale,
-          0.92 * scale,
+          0.07 * treeScale,
+          0.11 * treeScale,
+          0.92 * treeScale,
           5,
         ),
         this.materials.wood,
       );
       branch.position.set(
-        (index % 2 === 0 ? -0.28 : 0.28) * scale,
-        1.43 * scale,
+        (index % 2 === 0 ? -0.28 : 0.28) * treeScale,
+        1.43 * treeScale,
         0,
       );
       branch.rotation.z = (index % 2 === 0 ? -1 : 1) * 0.92;
@@ -10758,21 +13204,57 @@ export class PortfolioGame {
         ] as const
       ).entries()) {
         const crown = new THREE.Mesh(
-          new THREE.DodecahedronGeometry(radius * scale, 0),
+          new THREE.DodecahedronGeometry(radius * treeScale, 0),
           material,
         );
         crown.position.set(
-          (layer === 0 ? -0.12 : 0.15) * scale,
-          y * scale,
+          (layer === 0 ? -0.12 : 0.15) * treeScale,
+          y * treeScale,
           (index % 3 - 1) * 0.08,
         );
         crown.scale.set(1.05, layer === 0 ? 0.78 : 0.9, 0.94);
         crown.rotation.set(0.08 * layer, index * 0.37, -0.05 * index);
         crown.castShadow = false;
         crown.receiveShadow = true;
+        crown.userData.clickNavigationPassThrough = true;
         group.add(crown);
       }
       parent.add(group);
+      group.updateWorldMatrix(true, true);
+      const berryColorValues = [
+        palette.amber,
+        palette.amber,
+        palette.coral,
+        palette.violet,
+        palette.amber,
+        palette.cyan,
+      ] as const;
+      for (let berry = 0; berry < 4; berry += 1) {
+        const localBerry = new THREE.Vector3(
+          (-0.48 + berry * 0.31 + (index % 2) * 0.08) * treeScale,
+          (1.28 + (berry % 2) * 0.34) * treeScale,
+          ((berry % 3) - 1) * 0.22 * treeScale,
+        );
+        const localStem = localBerry
+          .clone()
+          .add(new THREE.Vector3(0, 0.28 * treeScale, 0));
+        group.localToWorld(localBerry);
+        group.localToWorld(localStem);
+        glowberryPositions.push(localBerry);
+        glowberryColors.push(
+          new THREE.Color(
+            berryColorValues[(index + berry) % berryColorValues.length]!,
+          ),
+        );
+        glowberryStemPositions.push(
+          localStem.x,
+          localStem.y,
+          localStem.z,
+          localBerry.x,
+          localBerry.y,
+          localBerry.z,
+        );
+      }
       this.registerPlayerOccluder(group);
       // Keep side collision close to the solid trunk. The leafy crown is a
       // separate landing surface: a high descending jump settles on top rather
@@ -10784,22 +13266,21 @@ export class PortfolioGame {
         undefined,
         false,
       );
-      group.updateWorldMatrix(true, true);
       this.tempBounds.setFromObject(group);
       const crownTop = this.tempBounds.max.y;
       this.tempWorld
         .set(
-          0.15 * scale,
+          0.15 * treeScale,
           0,
           (index % 3 - 1) * 0.08,
         )
         .applyMatrix4(group.matrixWorld);
-      this.surfaceAreas.push({
+      this.addSurfaceArea({
         id: `falls-tree-crown-${index}`,
         x: this.tempWorld.x,
         z: this.tempWorld.z,
-        halfWidth: 0.48 * scale,
-        halfDepth: 0.48 * scale,
+        halfWidth: 0.48 * treeScale,
+        halfDepth: 0.48 * treeScale,
         requiresJump: true,
         supportMargin: 0.08,
         edgeGrace: 0.1,
@@ -10807,33 +13288,105 @@ export class PortfolioGame {
       });
     }
 
+    const glowberryMaterial = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.94,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const glowberries = new THREE.InstancedMesh(
+      new THREE.OctahedronGeometry(0.15, 0),
+      glowberryMaterial,
+      glowberryPositions.length,
+    );
+    glowberries.name = "falls-hanging-glowberries";
+    glowberries.userData.clickNavigationPassThrough = true;
+    glowberries.frustumCulled = false;
+    glowberries.renderOrder = 4;
+    const berryDummy = new THREE.Object3D();
+    for (const [index, position] of glowberryPositions.entries()) {
+      berryDummy.position.copy(position);
+      const scale = 0.78 + (index % 4) * 0.09;
+      berryDummy.scale.set(scale, 1.24 * scale, scale);
+      berryDummy.rotation.set(index * 0.31, index * 0.77, index * 0.19);
+      berryDummy.updateMatrix();
+      glowberries.setMatrixAt(index, berryDummy.matrix);
+      glowberries.setColorAt(index, glowberryColors[index]!);
+    }
+    glowberries.instanceMatrix.needsUpdate = true;
+    if (glowberries.instanceColor) {
+      glowberries.instanceColor.needsUpdate = true;
+    }
+    parent.add(glowberries);
+
+    const glowberryStems = new THREE.LineSegments(
+      new THREE.BufferGeometry().setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(glowberryStemPositions, 3),
+      ),
+      new THREE.LineBasicMaterial({
+        color: 0x294a37,
+        transparent: true,
+        opacity: 0.82,
+      }),
+    );
+    glowberryStems.name = "falls-glowberry-hanging-stems";
+    parent.add(glowberryStems);
+
     const bushes = [
-      [-10.3, -6.2],
-      [10.4, -6.1],
-      [-11.9, -3.2],
-      [11.8, -3.1],
-      [-10.5, 6.9],
-      [10.8, 7.4],
-      [-7.8, 10.3],
-      [7.7, 10.25],
-      [-3.8, 8.7],
-      [7.05, 9.05],
-      [-6.4, 1.1],
-      [5.2, 2.9],
-      [-8.1, -11.2],
-      [8.2, -11.35],
-      [-12.8, 1.6],
-      [12.7, 1.5],
-      [-4.7, -6.7],
-      [4.9, -6.2],
+      // These larger thickets frame the open river without entering its
+      // collision ribbon or the crystal-cache sightline.
+      [-3.4, 3.8, 1.28],
+      [4.4, 3.6, 1.22],
+      [-3.2, 0, 1.18],
+      [3, -0.2, 1.16],
+      [-10.3, -6.2, 1],
+      [10.4, -6.1, 1],
+      [-11.9, -3.2, 1],
+      [11.8, -3.1, 1],
+      [-10.5, 6.9, 1],
+      [10.8, 7.4, 1],
+      [-7.8, 10.3, 1],
+      [10.9, 10.45, 1],
+      [-3.8, 8.7, 1],
+      [11.25, 8.85, 1],
+      [-6.4, 1.1, 1],
+      [5.2, 2.9, 1],
+      [-8.1, -11.2, 1],
+      [8.2, -11.35, 1],
+      [-12.8, 1.6, 1],
+      [12.7, 1.5, 1],
+      [-4.7, -6.7, 1],
+      [4.9, -6.2, 1],
     ] as const;
     const bushCount =
-      this.quality === "low" ? 10 : this.quality === "medium" ? 14 : bushes.length;
-    for (const [index, [x, z]] of bushes.slice(0, bushCount).entries()) {
+      this.quality === "low" ? 10 : this.quality === "medium" ? 14 : 18;
+    const glowBudGeometry = new THREE.OctahedronGeometry(0.115, 0);
+    const glowBudMaterials = [
+      new THREE.MeshBasicMaterial({
+        color: palette.amber,
+        toneMapped: false,
+      }),
+      new THREE.MeshBasicMaterial({
+        color: palette.coral,
+        toneMapped: false,
+      }),
+      new THREE.MeshBasicMaterial({
+        color: palette.violet,
+        toneMapped: false,
+      }),
+    ] as const;
+    for (const [index, [x, z, scale]] of bushes
+      .slice(0, bushCount)
+      .entries()) {
       const group = new THREE.Group();
       group.position.set(x, 0, z);
+      group.userData.clickNavigationPassThrough = true;
       for (let lobe = 0; lobe < 3; lobe += 1) {
-        const radius = 0.34 + ((index + lobe) % 3) * 0.07;
+        const radius =
+          (0.34 + ((index + lobe) % 3) * 0.07) * scale;
         const leaf = new THREE.Mesh(
           new THREE.DodecahedronGeometry(radius, 0),
           (index + lobe) % 2 === 0
@@ -10841,9 +13394,9 @@ export class PortfolioGame {
             : this.materials.mossDark,
         );
         leaf.position.set(
-          (lobe - 1) * 0.34,
-          0.28 + (lobe % 2) * 0.13,
-          Math.sin(index + lobe) * 0.22,
+          (lobe - 1) * 0.34 * scale,
+          (0.28 + (lobe % 2) * 0.13) * scale,
+          Math.sin(index + lobe) * 0.22 * scale,
         );
         leaf.scale.y = 0.7;
         leaf.rotation.y = index * 0.4 + lobe;
@@ -10851,8 +13404,27 @@ export class PortfolioGame {
         leaf.receiveShadow = true;
         group.add(leaf);
       }
+      if (index < (this.quality === "low" ? 5 : 10)) {
+        for (let bud = 0; bud < 3; bud += 1) {
+          const glowBud = new THREE.Mesh(
+            glowBudGeometry,
+            glowBudMaterials[(index + bud) % glowBudMaterials.length]!,
+          );
+          glowBud.position.set(
+            (bud - 1) * 0.34 * scale,
+            (0.62 + (bud % 2) * 0.14) * scale,
+            (bud % 2 === 0 ? -0.14 : 0.18) * scale,
+          );
+          glowBud.scale.setScalar(0.92 + bud * 0.09);
+          glowBud.rotation.set(bud * 0.24, index * 0.61, bud * 0.19);
+          glowBud.castShadow = false;
+          group.add(glowBud);
+        }
+      }
       parent.add(group);
     }
+
+    this.createFallsMushroomGrove(parent);
 
     const vines = [
       [-6, 4.25, -7.22, 2.9, -0.18],
@@ -10871,6 +13443,7 @@ export class PortfolioGame {
       .entries()) {
       const group = new THREE.Group();
       group.position.set(x, 0, z);
+      group.userData.clickNavigationPassThrough = true;
       const segmentLength = length / 3;
       for (let segment = 0; segment < 3; segment += 1) {
         const stem = new THREE.Mesh(
@@ -10906,33 +13479,187 @@ export class PortfolioGame {
     }
   }
 
+  private createFallsMushroomGrove(parent: THREE.Group): void {
+    const authoredMushrooms = [
+      [-8.9, 6.35, 0.95, palette.amber, "warm"],
+      [-8.25, 6.05, 0.62, palette.coral, "warm"],
+      [-10.1, 5.65, 0.72, palette.violet, "mystic"],
+      [5.9, 5.15, 0.88, palette.amber, "warm"],
+      [6.55, 4.85, 0.58, palette.violet, "mystic"],
+      [10.85, 4.3, 0.72, palette.coral, "warm"],
+      [-9.65, -1.55, 0.82, palette.amber, "warm"],
+      [-10.25, -1.15, 0.54, palette.violet, "mystic"],
+      [9.15, -1.15, 0.86, palette.coral, "warm"],
+      [9.8, -1.55, 0.55, palette.amber, "warm"],
+      [-4.75, -5.65, 0.76, palette.violet, "mystic"],
+      [-5.35, -5.25, 0.52, palette.amber, "warm"],
+      [4.45, -5.65, 0.78, palette.cyan, "mystic"],
+      [5.05, -5.25, 0.54, palette.amber, "warm"],
+      [-2.7, 6.75, 0.68, palette.amber, "warm"],
+      [2.75, 6.9, 0.66, palette.violet, "mystic"],
+      [-11.45, 1.25, 0.62, palette.coral, "warm"],
+      [11.25, 0.8, 0.68, palette.amber, "warm"],
+      [-6.15, 10.25, 0.58, palette.violet, "mystic"],
+      [5.45, 10.1, 0.6, palette.amber, "warm"],
+      [-7.55, -10.3, 0.64, palette.coral, "warm"],
+      [7.65, -10.15, 0.64, palette.violet, "mystic"],
+      [-1.8, -6.7, 0.56, palette.amber, "warm"],
+      [2.15, -6.55, 0.58, palette.coral, "warm"],
+    ] as const;
+    const activeCount =
+      this.quality === "low"
+        ? 10
+        : this.quality === "medium"
+          ? 18
+          : authoredMushrooms.length;
+    const mushrooms = authoredMushrooms.slice(0, activeCount);
+    const stemMaterial = new THREE.MeshBasicMaterial({
+      color: 0xd8b88d,
+      toneMapped: false,
+    });
+    const capMaterial = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      toneMapped: false,
+    });
+    const stems = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.048, 0.072, 0.32, 5),
+      stemMaterial,
+      mushrooms.length,
+    );
+    stems.name = "falls-mystic-mushroom-stems";
+    stems.userData.clickNavigationPassThrough = true;
+    const caps = new THREE.InstancedMesh(
+      new THREE.SphereGeometry(
+        0.28,
+        7,
+        4,
+        0,
+        Math.PI * 2,
+        0,
+        Math.PI / 2,
+      ),
+      capMaterial,
+      mushrooms.length,
+    );
+    caps.name = "falls-mystic-mushroom-caps";
+    caps.userData.clickNavigationPassThrough = true;
+    caps.renderOrder = 3;
+    const dummy = new THREE.Object3D();
+    const groundY = 0.145;
+    for (const [index, [x, z, scale, color]] of mushrooms.entries()) {
+      dummy.position.set(x, groundY + 0.16 * scale, z);
+      dummy.rotation.set(0, index * 0.71, 0);
+      dummy.scale.setScalar(scale);
+      dummy.updateMatrix();
+      stems.setMatrixAt(index, dummy.matrix);
+
+      dummy.position.y = groundY + 0.3 * scale;
+      dummy.rotation.set(0, index * 0.93, 0);
+      dummy.scale.set(scale, scale * 0.68, scale);
+      dummy.updateMatrix();
+      caps.setMatrixAt(index, dummy.matrix);
+      caps.setColorAt(index, new THREE.Color(color));
+    }
+    stems.instanceMatrix.needsUpdate = true;
+    caps.instanceMatrix.needsUpdate = true;
+    if (caps.instanceColor) caps.instanceColor.needsUpdate = true;
+    parent.add(stems, caps);
+
+    const addGlowPools = (
+      name: string,
+      glow: "warm" | "mystic",
+      color: THREE.ColorRepresentation,
+      opacity: number,
+    ): void => {
+      const matching = mushrooms.filter((mushroom) => mushroom[4] === glow);
+      if (matching.length === 0) return;
+      const material = this.materials.warmLightPool.clone();
+      material.name = `${name}-material`;
+      material.uniforms.color!.value.set(color);
+      material.uniforms.opacity!.value = opacity;
+      const pools = new THREE.InstancedMesh(
+        new THREE.PlaneGeometry(1, 1),
+        material,
+        matching.length,
+      );
+      pools.name = name;
+      pools.frustumCulled = false;
+      pools.renderOrder = 1;
+      for (const [index, [x, z, scale]] of matching.entries()) {
+        dummy.position.set(x, groundY + 0.012, z);
+        dummy.rotation.set(-Math.PI / 2, 0, index * 0.47);
+        dummy.scale.set(1.45 * scale, 1.2 * scale, 1);
+        dummy.updateMatrix();
+        pools.setMatrixAt(index, dummy.matrix);
+      }
+      pools.instanceMatrix.needsUpdate = true;
+      parent.add(pools);
+    };
+    const poolOpacity =
+      this.quality === "low" ? 0.1 : this.quality === "medium" ? 0.16 : 0.2;
+    addGlowPools(
+      "falls-warm-mushroom-ground-glow",
+      "warm",
+      0xff9e38,
+      poolOpacity,
+    );
+    addGlowPools(
+      "falls-violet-mushroom-ground-glow",
+      "mystic",
+      0xa276ff,
+      poolOpacity * 0.78,
+    );
+  }
+
   private createWaterfall(
     parent: THREE.Group,
     x: number,
     z: number,
     height: number,
-    hasCave = false,
+    hasCave: boolean,
+    visuals: FallsVisualMaterials,
   ): void {
     const group = new THREE.Group();
     group.name = hasCave
       ? "falls-central-waterfall"
       : `falls-side-waterfall-${x}`;
     group.position.set(x, 0, z);
+    let rockMassIndex = 0;
+    const addRockMass = (
+      size: readonly [number, number, number],
+      position: readonly [number, number, number],
+      material: THREE.Material,
+    ): THREE.Mesh => {
+      const mesh = new THREE.Mesh(
+        createLayeredCliffGeometry(
+          size[0],
+          size[1],
+          size[2],
+          this.quality,
+          x * 0.47 + height * 1.31 + rockMassIndex * 2.17,
+        ),
+        material,
+      );
+      rockMassIndex += 1;
+      mesh.position.set(...position);
+      mesh.castShadow = false;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+      return mesh;
+    };
 
     if (hasCave) {
-      // The cave shell is visually assembled from several boxes, but its crown
-      // is one continuous route. Let an ascending player clear those vertical
-      // colliders shortly before reaching the roof instead of requiring their
-      // feet to match several adjacent top planes to the millimetre.
+      // The cave shell is visually assembled from interlocking cliff masses,
+      // but its crown is one continuous route. Let an ascending player clear
+      // those vertical colliders shortly before reaching the roof instead of
+      // requiring their feet to match several adjacent top planes exactly.
       const summitCollisionClearAbove = height + 0.15;
       for (const side of [-1, 1]) {
-        const cavePillar = addBox(
-          group,
+        const cavePillar = addRockMass(
           [1.1, height + 0.8, 2.5],
           [side * 1.55, (height + 0.8) / 2, -0.6],
-          this.materials.moss,
+          visuals.cliff,
         );
-        cavePillar.castShadow = false;
         this.registerClimbableBox(
           cavePillar,
           null,
@@ -10940,20 +13667,18 @@ export class PortfolioGame {
           summitCollisionClearAbove,
         );
       }
-      const caveCap = addBox(
-        group,
+      const caveCap = addRockMass(
         [2.1, 1.1, 2.5],
         [0, height + 0.25, -0.6],
-        this.materials.moss,
+        visuals.cliff,
       );
-      caveCap.castShadow = false;
       this.registerClimbableBox(
         caveCap,
         null,
         undefined,
         summitCollisionClearAbove,
       );
-      this.surfaceAreas.push({
+      this.addSurfaceArea({
         id: "falls-cave-summit",
         x,
         z: z - 1.46,
@@ -10969,16 +13694,15 @@ export class PortfolioGame {
         group,
         [2.1, 0.18, 4],
         [0, 0.14, -1.55],
-        this.materials.darkStone,
+        visuals.cliffDark,
       );
+      shadeFallsStoneGeometry(caveFloor.geometry, 19);
       caveFloor.castShadow = false;
-      const caveBack = addBox(
-        group,
+      const caveBack = addRockMass(
         [4.2, height + 0.8, 0.38],
         [0, (height + 0.8) / 2, -3.38],
-        this.materials.moss,
+        visuals.cliffDark,
       );
-      caveBack.castShadow = false;
       this.registerClimbableBox(
         caveBack,
         null,
@@ -10986,13 +13710,11 @@ export class PortfolioGame {
         summitCollisionClearAbove,
       );
       for (const side of [-1, 1] as const) {
-        const sideWall = addBox(
-          group,
+        const sideWall = addRockMass(
           [1.1, height + 0.8, 1.36],
           [side * 1.55, (height + 0.8) / 2, -2.52],
-          this.materials.moss,
+          visuals.cliff,
         );
-        sideWall.castShadow = false;
         this.registerClimbableBox(
           sideWall,
           null,
@@ -11000,20 +13722,19 @@ export class PortfolioGame {
           summitCollisionClearAbove,
         );
       }
-      const rearRoof = addBox(
-        group,
+      const rearRoof = addRockMass(
         [2.1, 0.32, 1.36],
         [0, height + 0.64, -2.52],
-        this.materials.moss,
+        visuals.cliff,
       );
-      rearRoof.castShadow = false;
       this.registerClimbableBox(
         rearRoof,
         null,
         undefined,
         summitCollisionClearAbove,
       );
-      this.surfaceAreas.push({
+      addWaterfallCaveLining(group, height, visuals.cliffDark);
+      this.addSurfaceArea({
         id: "falls-cave-floor",
         x,
         z: z - 1.55,
@@ -11023,35 +13744,58 @@ export class PortfolioGame {
         heightAt: () => 0.23,
       });
     } else {
-      const cliff = addBox(
-        group,
+      const cliff = addRockMass(
         [4.2, height + 0.8, 2.5],
         [0, (height + 0.8) / 2, -0.6],
-        this.materials.moss,
+        visuals.cliff,
       );
-      cliff.castShadow = true;
       this.registerClimbableBox(
         cliff,
         `falls-waterfall-crown-${x}`,
       );
     }
 
+    addWaterfallOutcroppings(
+      group,
+      height,
+      hasCave,
+      {
+        cliff: visuals.cliff,
+        cliffDark: visuals.cliffDark,
+        moss: visuals.ground,
+        rock: visuals.rock,
+        wetRock: visuals.wetRock,
+      },
+      x * 0.37 + height,
+    );
+
+    // Keep the translucent folds safely in front of the structural cliff.
+    // The central sheet also terminates beneath the cave cap instead of
+    // intersecting it, which previously produced camera-dependent holes.
+    const waterfallSheetTop = hasCave ? height - 0.31 : height;
+    const waterfallSheetDepth = 0.79;
     if (hasCave) {
       for (const side of [-1, 1] as const) {
-        const material = new THREE.MeshBasicMaterial({
-          color: palette.water,
-          transparent: true,
-          opacity: 0.78,
-          // The player reveal material reads scene depth, so the parted
-          // waterfall halves must contribute depth before that later pass.
-          depthWrite: true,
-          side: THREE.DoubleSide,
-        });
+        const material = visuals.water.clone();
+        material.name = "falls-parting-waterfall-material";
+        material.opacity = 0.78;
+        // The player reveal material reads scene depth, so the parted
+        // waterfall halves must contribute depth before that later pass.
+        material.depthWrite = true;
         const panel = new THREE.Mesh(
-          new THREE.PlaneGeometry(1.16, height),
+          createWaterfallSheetGeometry(
+            1.16,
+            waterfallSheetTop,
+            this.quality,
+            x + side * 0.73,
+          ),
           material,
         );
-        panel.position.set(side * 0.575, height / 2, 0.68);
+        panel.position.set(
+          side * 0.575,
+          waterfallSheetTop / 2,
+          waterfallSheetDepth,
+        );
         panel.userData.side = side;
         group.add(panel);
         this.fallsRuneRitual.registerWaterfallPanel(panel);
@@ -11059,20 +13803,36 @@ export class PortfolioGame {
       }
     } else {
       const water = new THREE.Mesh(
-        new THREE.PlaneGeometry(2.3, height),
-        this.materials.water,
+        createWaterfallSheetGeometry(
+          2.3,
+          waterfallSheetTop,
+          this.quality,
+          x * 0.47,
+        ),
+        visuals.water,
       );
-      water.position.set(0, height / 2, 0.68);
+      water.position.set(
+        0,
+        waterfallSheetTop / 2,
+        waterfallSheetDepth,
+      );
       group.add(water);
       this.registerPlayerOccluder(water);
-      this.animatedItems.push({
-        object: water,
-        originY: water.position.y,
-        phase: x,
-        amplitude: 0.035,
-        rotationSpeed: 0,
-      });
     }
+    const baseFoam = new THREE.Mesh(
+      new THREE.PlaneGeometry(hasCave ? 2.65 : 2.85, 0.72, 8, 2),
+      visuals.foam,
+    );
+    baseFoam.name = hasCave
+      ? "falls-central-waterfall-base-foam"
+      : `falls-side-waterfall-base-foam-${x}`;
+    baseFoam.position.set(0, 0.232, 0.88);
+    baseFoam.rotation.x = -Math.PI / 2;
+    baseFoam.rotation.z = x * 0.035;
+    baseFoam.castShadow = false;
+    baseFoam.receiveShadow = false;
+    baseFoam.renderOrder = 2;
+    group.add(baseFoam);
     parent.add(group);
   }
 
@@ -11425,6 +14185,8 @@ export class PortfolioGame {
   }
 
   private cancelNonPongPointerDrags(notifyMath = true): void {
+    this.cancelClickNavigationPress();
+    if (!this.clickNavigation) this.clickNavigationMarker?.hide();
     this.cancelTelekinesisHold();
     this.archiveOrbitPlayground.cancelPointerDrags();
     this.cancelMathInstanceDrag(notifyMath);
@@ -11443,6 +14205,9 @@ export class PortfolioGame {
     if (this.fishSchool) {
       this.fishSchool.flyingCount = 0;
       this.fishSchool.flightAges.fill(0);
+      this.fishSchool.magicRecalls.length = 0;
+      this.fishSchool.magicPoints.geometry.setDrawRange(0, 0);
+      this.fishSchool.magicPoints.visible = false;
       const fishCount = this.getFishRenderCount(this.fishSchool);
       this.fishSchool.mesh.count = fishCount;
       this.fishSchool.aura.count = fishCount;
@@ -11456,8 +14221,11 @@ export class PortfolioGame {
       onStatus: (message) => this.hooks.onStatus(message),
       getRevealTarget: (target) =>
         this.player.group.localToWorld(target.set(0, 2.46, 0.12)),
+      onPreparePortfolio: () =>
+        this.hooks.onPreparePortfolio("monument"),
       onRevealPortfolio: () => this.hooks.onRequestPortfolio("monument"),
     });
+    altar.setQuality(this.quality);
     altar.object.position.set(x, 0, z);
     parent.add(altar.object);
     this.runeAltar = altar;
@@ -11472,6 +14240,10 @@ export class PortfolioGame {
   ): void {
     const group = new THREE.Group();
     group.position.set(x, 0, z);
+    const crowdingDialogue = npcCrowdingDialogue[interactionId] ?? {
+      speaker: "Stranger",
+      lines: ["A little room, if the sky permits."],
+    };
     const ensureNonIndexed = (
       geometry: THREE.BufferGeometry,
     ): THREE.BufferGeometry => {
@@ -11511,25 +14283,47 @@ export class PortfolioGame {
       "color" in accent && accent.color instanceof THREE.Color
         ? accent.color
         : new THREE.Color(palette.cyan);
-    const signalGeometry = colorGeometry(
-      ensureNonIndexed(
-        new THREE.OctahedronGeometry(0.15, 0),
-      ).translate(0, 2.35, 0),
-      accentColor,
-    );
     const npcGeometry = mergeGeometries(
-      [bodyGeometry, headGeometry, signalGeometry],
+      [bodyGeometry, headGeometry],
       false,
     );
     bodyGeometry.dispose();
     headGeometry.dispose();
-    signalGeometry.dispose();
     if (npcGeometry) {
       const npcMesh = new THREE.Mesh(npcGeometry, this.materials.npc);
       npcMesh.castShadow = false;
       npcMesh.receiveShadow = true;
       group.add(npcMesh);
     }
+    const signalCrystal = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.22, 0),
+      new THREE.MeshBasicMaterial({
+        color: accentColor,
+        toneMapped: false,
+      }),
+    );
+    signalCrystal.name = `${interactionId}-plumbob-crystal`;
+    signalCrystal.position.y = 2.38;
+    signalCrystal.scale.y = 1.32;
+    signalCrystal.castShadow = false;
+    signalCrystal.renderOrder = 4;
+    group.add(signalCrystal);
+    const signalAura = new THREE.Mesh(
+      new THREE.TorusGeometry(0.3, 0.022, 5, 20),
+      new THREE.MeshBasicMaterial({
+        color: accentColor,
+        transparent: true,
+        opacity: 0.34,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
+      }),
+    );
+    signalAura.name = `${interactionId}-plumbob-aura`;
+    signalAura.position.y = 2.38;
+    signalAura.rotation.x = Math.PI / 2;
+    signalAura.renderOrder = 4;
+    group.add(signalAura);
     const speechHalo = new THREE.Mesh(
       new THREE.TorusGeometry(0.24, 0.025, 5, 18),
       new THREE.MeshBasicMaterial({
@@ -11551,8 +14345,15 @@ export class PortfolioGame {
     const speechDuration = 1.18;
     this.wanderingNpcs.push({
       group,
-      origin: new THREE.Vector3(x, 0, z),
+      home: new THREE.Vector3(x, 0, z),
       interactionId,
+      crowdingSpeaker: crowdingDialogue.speaker,
+      crowdingQuips: crowdingDialogue.lines,
+      crowdingQuipIndex: 0,
+      crowdingQuipCooldownUntil: 0,
+      crowdedFromAbove: false,
+      signalCrystal,
+      signalAura,
       speechHalo,
       speechAge: speechDuration,
       speechDuration,
@@ -11570,13 +14371,14 @@ export class PortfolioGame {
     x: number,
     z: number,
     lines: readonly string[],
+    monospaceTerms?: readonly string[],
   ): void {
     let nextLine = 0;
     this.addInteraction(id, label, x, z, 2, () => {
       const line = lines[nextLine % lines.length];
       nextLine += 1;
       if (!line) return;
-      this.emitNpcSpeech(id, speaker, line);
+      this.emitNpcSpeech(id, speaker, line, monospaceTerms);
     });
   }
 
@@ -11656,21 +14458,188 @@ export class PortfolioGame {
     const group = new THREE.Group();
     group.name = `signal-server-rack-${x}-${z}`;
     group.position.set(x, 0, z);
-    addBox(group, [2.7, height, 2.7], [0, height / 2, 0], this.materials.black);
+
+    const cabinet = addBox(
+      group,
+      [2.7, height, 2.7],
+      [0, height / 2, 0],
+      this.materials.tealDark,
+    );
+    cabinet.name = "signal-rack-cabinet";
+    cabinet.castShadow = false;
+    cabinet.receiveShadow = true;
+    const plinth = addBox(
+      group,
+      [2.98, 0.24, 2.98],
+      [0, 0.12, 0],
+      this.materials.darkStone,
+    );
+    plinth.name = "signal-rack-plinth";
+    const roof = addBox(
+      group,
+      [2.92, 0.2, 2.92],
+      [0, height - 0.1, 0],
+      this.materials.darkStone,
+    );
+    roof.name = "signal-rack-roof";
+
+    const frontRecess = addBox(
+      group,
+      [2.3, height - 0.48, 0.16],
+      [0, height / 2 - 0.02, 1.37],
+      this.materials.black,
+    );
+    frontRecess.name = "signal-rack-recessed-backplane";
+    frontRecess.castShadow = false;
+    for (const side of [-1, 1] as const) {
+      const frontRail = addBox(
+        group,
+        [0.13, height - 0.26, 0.2],
+        [side * 1.19, height / 2, 1.44],
+        this.materials.darkStone,
+      );
+      frontRail.name = "signal-rack-front-rail";
+      const sidePanel = addBox(
+        group,
+        [0.12, height * 0.6, 1.82],
+        [side * 1.39, height * 0.52, 0],
+        this.materials.darkStone,
+      );
+      sidePanel.name = "signal-rack-side-service-panel";
+      sidePanel.castShadow = false;
+      for (let vent = 0; vent < 4; vent += 1) {
+        const ventSlit = addBox(
+          group,
+          [0.045, 0.075, 1.32],
+          [
+            side * 1.46,
+            height * 0.31 + vent * height * 0.14,
+            0,
+          ],
+          this.materials.black,
+        );
+        ventSlit.name = "signal-rack-side-vent";
+        ventSlit.castShadow = false;
+      }
+      const sideBus = addBox(
+        group,
+        [0.04, height * 0.42, 0.08],
+        [side * 1.47, height * 0.52, 0.72],
+        accent,
+      );
+      sideBus.name = "signal-rack-side-data-bus";
+      sideBus.castShadow = false;
+    }
+
+    const bayCount = Math.max(6, Math.round(height * 1.18));
+    const bayBottom = 0.48;
+    const bayTop = height - 0.72;
+    const bayStep = (bayTop - bayBottom) / Math.max(1, bayCount - 1);
+    for (let index = 0; index < bayCount; index += 1) {
+      const bayY = bayBottom + index * bayStep;
+      const bay = addBox(
+        group,
+        [1.92, Math.min(0.34, bayStep * 0.6), 0.16],
+        [0, bayY, 1.48],
+        this.materials.darkStone,
+      );
+      bay.name = "signal-rack-compute-blade";
+      bay.castShadow = false;
+      const ventWidth = 0.58 + ((index + Math.round(Math.abs(x))) % 3) * 0.13;
+      const vent = addBox(
+        group,
+        [ventWidth, 0.035, 0.035],
+        [-0.28, bayY, 1.585],
+        this.materials.black,
+      );
+      vent.name = "signal-rack-blade-vent";
+      vent.castShadow = false;
+      const indicator = addBox(
+        group,
+        [0.105, 0.075, 0.04],
+        [index % 2 === 0 ? 0.73 : 0.58, bayY, 1.59],
+        index % 3 === 1 ? this.materials.parchment : accent,
+      );
+      indicator.name = "signal-rack-blade-indicator";
+      indicator.castShadow = false;
+    }
+
+    const dial = new THREE.Mesh(
+      new THREE.RingGeometry(0.2, 0.275, 14),
+      accent,
+    );
+    dial.name = "signal-rack-header-dial";
+    dial.position.set(-0.66, height - 0.38, 1.59);
+    dial.castShadow = false;
+    group.add(dial);
+    const dialNeedle = addBox(
+      group,
+      [0.035, 0.24, 0.035],
+      [-0.66, height - 0.38, 1.615],
+      this.materials.parchment,
+    );
+    dialNeedle.name = "signal-rack-header-needle";
+    dialNeedle.rotation.z = x < 0 ? -0.72 : x > 0 ? 0.58 : -0.12;
+    dialNeedle.castShadow = false;
+    for (let glyph = 0; glyph < 3; glyph += 1) {
+      const glyphBar = addBox(
+        group,
+        [0.22 + glyph * 0.08, 0.045, 0.04],
+        [0.05 + glyph * 0.31, height - 0.48 + glyph * 0.09, 1.59],
+        glyph === 1 ? this.materials.parchment : accent,
+      );
+      glyphBar.name = "signal-rack-header-glyph";
+      glyphBar.castShadow = false;
+    }
+
     const lowerBar = addBox(
       group,
-      [2.9, 0.12, 0.18],
-      [0, height * 0.33, 1.42],
+      [2.34, 0.07, 0.12],
+      [0, height * 0.33, 1.57],
       accent,
     );
     const upperBar = addBox(
       group,
-      [2.9, 0.12, 0.18],
-      [0, height * 0.66, 1.42],
+      [2.34, 0.07, 0.12],
+      [0, height * 0.66, 1.57],
       accent,
     );
-    const cap = new THREE.Mesh(new THREE.OctahedronGeometry(0.72, 0), accent);
+    const scanBar = addBox(
+      group,
+      [0.92, 0.055, 0.13],
+      [-0.45, height * 0.5, 1.59],
+      accent,
+    );
+    lowerBar.name = "signal-rack-lower-bus";
+    upperBar.name = "signal-rack-upper-bus";
+    scanBar.name = "signal-rack-scanner";
+    for (const bar of [lowerBar, upperBar, scanBar]) {
+      bar.castShadow = false;
+    }
+
+    addCylinder(
+      group,
+      0.25,
+      0.34,
+      0.44,
+      8,
+      [0, height + 0.18, 0],
+      this.materials.brass,
+    );
+    const capHalo = new THREE.Mesh(
+      new THREE.TorusGeometry(0.76, 0.04, 5, 24),
+      accent,
+    );
+    capHalo.name = "signal-rack-cap-halo";
+    capHalo.position.y = height + 0.38;
+    capHalo.rotation.x = Math.PI / 2;
+    capHalo.castShadow = false;
+    group.add(capHalo);
+    const cap = new THREE.Mesh(new THREE.OctahedronGeometry(0.66, 0), accent);
+    cap.name = "signal-rack-orbiting-core";
     cap.position.y = height + 0.7;
+    cap.rotation.set(0.12, x * 0.08, 0.16);
+    cap.castShadow = false;
     group.add(cap);
     this.animatedItems.push({
       object: cap,
@@ -11680,7 +14649,7 @@ export class PortfolioGame {
       rotationSpeed: 0.35,
     });
     this.serverRacks.push({
-      bars: [lowerBar, upperBar],
+      bars: [lowerBar, upperBar, scanBar],
       cap,
       position: new THREE.Vector3(x, height + 0.7, z),
     });
@@ -11830,7 +14799,7 @@ export class PortfolioGame {
     this.createArchiveDataGlass(parent, 8.15, -5.8);
     backWall.castShadow = false;
     this.addStaticBox(1.1, 2.35, -9, 6.6, 2.45, 0.6, 4.785);
-    this.surfaceAreas.push({
+    this.addSurfaceArea({
       id: "archive-monitor-wall",
       x: 1.1,
       z: -9,
@@ -11853,7 +14822,7 @@ export class PortfolioGame {
         dataGlass.topHeight - 0.015,
         dataGlass.topHeight,
       );
-      this.surfaceAreas.push({
+      this.addSurfaceArea({
         id: "archive-data-glass-cap",
         x: dataGlass.x,
         z: dataGlass.z,
@@ -11880,7 +14849,9 @@ export class PortfolioGame {
       [5.35, 2.82, -8.2, 0, this.materials.tealDark, "chart", 0.92],
       [7.48, 1.35, -6.8, -Math.PI / 2, this.materials.cyanSoft, "signal", 0.88],
       [7.48, 1.62, -4.1, -Math.PI / 2, this.materials.tealDark, "chart", 0.98],
-      [7.48, 1.25, -1.55, -Math.PI / 2, this.materials.violet, "signal", 0.84],
+      // Tuck the final side monitor toward the glass frame. At -1.55 it sat
+      // inside the camera projection of the authored amber↔green route.
+      [7.48, 1.25, -2.38, -Math.PI / 2, this.materials.violet, "signal", 0.84],
     ] as const;
     for (const [
       index,
@@ -11910,7 +14881,7 @@ export class PortfolioGame {
         halfDepth,
         top - 0.015,
       );
-      this.surfaceAreas.push({
+      this.addSurfaceArea({
         id: `archive-monitor-${index}`,
         x,
         z,
@@ -11961,25 +14932,38 @@ export class PortfolioGame {
       undefined,
     );
 
+    // Keep the low trunk tucked beneath the monitor bank. Its former position
+    // at (6.15, -2.72) sat directly in the camera projection of the authored
+    // amber-to-green beam even though the ray cleared it in world space.
+    const maintenanceTrunkX = 4.9;
+    const maintenanceTrunkZ = -6.48;
     const maintenanceTrunk = addBox(
       parent,
       [1.35, 0.72, 1],
-      [6.15, 0.36, -2.72],
+      [maintenanceTrunkX, 0.36, maintenanceTrunkZ],
       this.materials.black,
     );
     maintenanceTrunk.castShadow = false;
     const trunkLatch = addBox(
       parent,
       [0.32, 0.08, 0.18],
-      [6.15, 0.75, -2.2],
+      [maintenanceTrunkX, 0.75, maintenanceTrunkZ + 0.52],
       this.materials.brass,
     );
     trunkLatch.castShadow = false;
-    this.addStaticBox(6.15, 0.36, -2.72, 0.675, 0.36, 0.5, 0.705);
-    this.surfaceAreas.push({
+    this.addStaticBox(
+      maintenanceTrunkX,
+      0.36,
+      maintenanceTrunkZ,
+      0.675,
+      0.36,
+      0.5,
+      0.705,
+    );
+    this.addSurfaceArea({
       id: "archive-maintenance-trunk",
-      x: 6.15,
-      z: -2.72,
+      x: maintenanceTrunkX,
+      z: maintenanceTrunkZ,
       halfWidth: 0.66,
       halfDepth: 0.485,
       requiresJump: true,
@@ -11988,8 +14972,8 @@ export class PortfolioGame {
     this.addInteraction(
       "archive-maintenance-trunk",
       "Inspect maintenance trunk",
-      6.15,
-      -2.72,
+      maintenanceTrunkX,
+      maintenanceTrunkZ,
       1.65,
       () => {
         this.hooks.onStatus(
@@ -12005,22 +14989,54 @@ export class PortfolioGame {
       this.materials.black,
     );
     consoleBase.castShadow = false;
-    const ledgerScreen = addBox(
+    this.createArchiveConsoleDisplay(parent, -2.25, -5.72, "ledger");
+    this.createArchiveConsoleDisplay(parent, 0.35, -5.72, "market");
+
+    for (const [index, material] of [
+      this.materials.cyan,
+      this.materials.parchment,
+      this.materials.coral,
+    ].entries()) {
+      const control = addCylinder(
+        parent,
+        0.055,
+        0.065,
+        0.045,
+        10,
+        [-1.55 + index * 0.34, 0.775, -5.08],
+        material,
+      );
+      control.name = "archive-console-control";
+      control.castShadow = false;
+    }
+    for (const [index, material] of [
+      this.materials.amber,
+      this.materials.green,
+      this.materials.coral,
+    ].entries()) {
+      const control = addCylinder(
+        parent,
+        0.055,
+        0.065,
+        0.045,
+        10,
+        [0.02 + index * 0.34, 0.775, -5.08],
+        material,
+      );
+      control.name = "archive-console-control";
+      control.castShadow = false;
+    }
+    const centerToggle = addBox(
       parent,
-      [2.2, 0.08, 1.05],
-      [-2.25, 0.78, -5.72],
-      this.materials.cyanSoft,
+      [0.1, 0.055, 0.32],
+      [-0.94, 0.79, -5.08],
+      this.materials.brass,
     );
-    const marketScreen = addBox(
-      parent,
-      [2.2, 0.08, 1.05],
-      [0.35, 0.78, -5.72],
-      this.materials.amberSoft,
-    );
-    ledgerScreen.castShadow = false;
-    marketScreen.castShadow = false;
+    centerToggle.name = "archive-console-center-toggle";
+    centerToggle.rotation.y = -0.18;
+    centerToggle.castShadow = false;
     this.addStaticBox(-1.1, 0.4, -5.85, 3.1, 0.42, 0.85, 0.86);
-    this.surfaceAreas.push({
+    this.addSurfaceArea({
       id: "archive-console",
       x: -1.1,
       z: -5.85,
@@ -12030,6 +15046,64 @@ export class PortfolioGame {
       landingMessage: "You vault onto the market console. The controls survive, for now.",
       heightAt: () => 0.86,
     });
+  }
+
+  private createArchiveConsoleDisplay(
+    parent: THREE.Group,
+    x: number,
+    z: number,
+    kind: "ledger" | "market",
+  ): void {
+    const backing = addBox(
+      parent,
+      [2.38, 0.06, 1.19],
+      [x, 0.78, z],
+      this.materials.darkStone,
+    );
+    backing.name = `archive-${kind}-console-bezel`;
+    backing.castShadow = false;
+
+    const texture = createArchiveConsoleDisplayTexture(kind);
+    const material = new THREE.MeshBasicMaterial({
+      name: `archive-${kind}-console-screen`,
+      map: texture,
+      toneMapped: false,
+      side: THREE.FrontSide,
+    });
+    const screen = new THREE.Mesh(
+      new THREE.PlaneGeometry(2.18, 1.01),
+      material,
+    );
+    screen.name = `archive-${kind}-console-screen`;
+    screen.position.set(x, 0.817, z);
+    screen.rotation.x = -Math.PI / 2;
+    screen.castShadow = false;
+    screen.receiveShadow = false;
+    screen.renderOrder = 1;
+    parent.add(screen);
+
+    const accent =
+      kind === "ledger" ? this.materials.cyan : this.materials.amber;
+    for (const edgeZ of [z - 0.56, z + 0.56]) {
+      const rail = addBox(
+        parent,
+        [2.28, 0.025, 0.035],
+        [x, 0.825, edgeZ],
+        accent,
+      );
+      rail.name = `archive-${kind}-console-accent-rail`;
+      rail.castShadow = false;
+    }
+    for (const edgeX of [x - 1.13, x + 1.13]) {
+      const rail = addBox(
+        parent,
+        [0.035, 0.025, 1.09],
+        [edgeX, 0.825, z],
+        accent,
+      );
+      rail.name = `archive-${kind}-console-accent-rail`;
+      rail.castShadow = false;
+    }
   }
 
   private createCrtMonitor(
@@ -12054,13 +15128,44 @@ export class PortfolioGame {
       this.materials.black,
     );
     body.castShadow = false;
-    const screen = addBox(
+    const screenBacking = addBox(
       monitor,
-      [1.42, 0.96, 0.08],
+      [1.62, 1.16, 0.1],
       [0, 0.08, 0.56],
+      this.materials.darkStone,
+    );
+    screenBacking.name = "archive-crt-screen-bezel";
+    screenBacking.castShadow = false;
+    const screen = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.42, 0.96),
       screenMaterial,
     );
+    screen.name = "archive-crt-screen-glass";
+    screen.position.set(0, 0.08, 0.615);
     screen.castShadow = false;
+    screen.receiveShadow = false;
+    monitor.add(screen);
+
+    const powerLamp = addBox(
+      monitor,
+      [0.11, 0.055, 0.055],
+      [-0.56, -0.6, 0.58],
+      this.materials.cyanSoft,
+    );
+    powerLamp.name = "archive-crt-power-lamp";
+    powerLamp.castShadow = false;
+    const tuningKnob = addCylinder(
+      monitor,
+      0.075,
+      0.075,
+      0.08,
+      10,
+      [0.55, -0.6, 0.58],
+      this.materials.brass,
+    );
+    tuningKnob.name = "archive-crt-tuning-knob";
+    tuningKnob.rotation.x = Math.PI / 2;
+    tuningKnob.castShadow = false;
 
     if (display === "smiley") this.addMonitorSmiley(monitor);
     else this.addMonitorTrace(monitor, display === "chart");
@@ -12104,20 +15209,20 @@ export class PortfolioGame {
   private addMonitorTrace(parent: THREE.Group, marketChart: boolean): void {
     const points = marketChart
       ? [
-          new THREE.Vector3(-0.58, -0.22, 0.62),
-          new THREE.Vector3(-0.34, 0.02, 0.62),
-          new THREE.Vector3(-0.1, -0.08, 0.62),
-          new THREE.Vector3(0.14, 0.29, 0.62),
-          new THREE.Vector3(0.36, 0.12, 0.62),
-          new THREE.Vector3(0.58, 0.35, 0.62),
+          new THREE.Vector3(-0.58, -0.22, 0.635),
+          new THREE.Vector3(-0.34, 0.02, 0.635),
+          new THREE.Vector3(-0.1, -0.08, 0.635),
+          new THREE.Vector3(0.14, 0.29, 0.635),
+          new THREE.Vector3(0.36, 0.12, 0.635),
+          new THREE.Vector3(0.58, 0.35, 0.635),
         ]
       : [
-          new THREE.Vector3(-0.58, 0.12, 0.62),
-          new THREE.Vector3(-0.24, 0.12, 0.62),
-          new THREE.Vector3(-0.08, -0.18, 0.62),
-          new THREE.Vector3(0.14, 0.28, 0.62),
-          new THREE.Vector3(0.3, -0.04, 0.62),
-          new THREE.Vector3(0.58, -0.04, 0.62),
+          new THREE.Vector3(-0.58, 0.12, 0.635),
+          new THREE.Vector3(-0.24, 0.12, 0.635),
+          new THREE.Vector3(-0.08, -0.18, 0.635),
+          new THREE.Vector3(0.14, 0.28, 0.635),
+          new THREE.Vector3(0.3, -0.04, 0.635),
+          new THREE.Vector3(0.58, -0.04, 0.635),
         ];
     const segments: THREE.Vector3[] = [];
     for (let index = 1; index < points.length; index += 1) {
@@ -12466,10 +15571,14 @@ export class PortfolioGame {
     this.archiveSignalPuzzle.forEachDynamicObject(protect);
     this.voidTurtleRide.forEachDynamicObject(protect);
     this.hanoiPuzzle.forEachDynamicObject(protect);
+    this.gridServerPatchPuzzle.forEachDynamicObject(protect);
     for (const kickable of this.kickables) protect(kickable.object);
     for (const telescope of this.telescopeRigs) protect(telescope.pivot);
     for (const npc of this.wanderingNpcs) protect(npc.group);
-    for (const lantern of this.lanterns) protect(lantern.light);
+    for (const lantern of this.lanterns) {
+      protect(lantern.light);
+      protect(lantern.pool);
+    }
     for (const rack of this.serverRacks) {
       for (const bar of rack.bars) protect(bar);
     }
@@ -12498,6 +15607,7 @@ export class PortfolioGame {
       material: THREE.Material;
       castShadow: boolean;
       receiveShadow: boolean;
+      clickNavigationPassThrough: boolean;
       meshes: THREE.Mesh<THREE.BufferGeometry, THREE.Material>[];
     }
 
@@ -12515,16 +15625,20 @@ export class PortfolioGame {
         return;
       }
 
+      const clickNavigationPassThrough =
+        isClickNavigationPassThrough(object);
       const key = [
         object.material.uuid,
         Number(object.castShadow),
         Number(object.receiveShadow),
+        Number(clickNavigationPassThrough),
         geometryKey(object.geometry),
       ].join("|");
       const bucket: MeshBucket = meshBuckets.get(key) ?? {
           material: object.material,
           castShadow: object.castShadow,
           receiveShadow: object.receiveShadow,
+          clickNavigationPassThrough,
           meshes: [],
         };
       bucket.meshes.push(object);
@@ -12550,6 +15664,8 @@ export class PortfolioGame {
       batch.name = `static-mesh-batch-${batchIndex}`;
       batch.castShadow = bucket.castShadow;
       batch.receiveShadow = bucket.receiveShadow;
+      batch.userData.clickNavigationPassThrough =
+        bucket.clickNavigationPassThrough;
       batchIndex += 1;
 
       for (const mesh of bucket.meshes) {
@@ -12695,7 +15811,23 @@ export class PortfolioGame {
     // pass moves the player to the nearest boundary of at least one solid.
     for (let pass = 0; pass < 4; pass += 1) {
       let correctedThisPass = false;
-      for (const collider of this.staticColliders) {
+      let lastProcessedOrder = -1;
+      let candidateIndex = 0;
+      this.staticColliderIndex.queryPoint(
+        position.x,
+        position.z,
+        this.playerRadius,
+        this.staticColliderCandidates,
+      );
+      while (candidateIndex < this.staticColliderCandidates.length) {
+        const collider =
+          this.staticColliderCandidates[candidateIndex];
+        candidateIndex += 1;
+        if (!collider) continue;
+        const colliderOrder =
+          this.staticColliderIndex.orderOf(collider);
+        if (colliderOrder <= lastProcessedOrder) continue;
+        lastProcessedOrder = colliderOrder;
         if (collider.enabled === false) continue;
         const solidTop = collider.solidTop;
         const crossedSolidTop =
@@ -12790,6 +15922,17 @@ export class PortfolioGame {
         }
         corrected = true;
         correctedThisPass = true;
+        // A correction can move the player into a later collider that was not
+        // near the pass's starting point. Re-query live bounds, but never
+        // revisit an earlier registration: that exactly mirrors the original
+        // insertion-ordered full-array pass.
+        this.staticColliderIndex.queryPoint(
+          position.x,
+          position.z,
+          this.playerRadius,
+          this.staticColliderCandidates,
+        );
+        candidateIndex = 0;
       }
       if (!correctedThisPass) break;
     }
@@ -12803,7 +15946,13 @@ export class PortfolioGame {
     previousFeetHeight: number,
   ): boolean {
     const feetHeight = this.surfaceOffset + this.jumpHeight;
-    for (const collider of this.staticColliders) {
+    const candidates = this.staticColliderIndex.queryPoint(
+      x,
+      z,
+      this.playerRadius,
+      this.staticColliderCandidates,
+    );
+    for (const collider of candidates) {
       if (collider.enabled === false) continue;
       const solidTop = collider.solidTop;
       if (solidTop !== undefined) {
@@ -13090,6 +16239,48 @@ export class PortfolioGame {
     }
   }
 
+  private addStaticCollider(
+    collider: StaticCollider,
+    mutable = false,
+  ): void {
+    this.staticColliderIndex.add(collider, mutable);
+    this.staticColliders.push(collider);
+  }
+
+  private removeStaticCollider(collider: StaticCollider): void {
+    const index = this.staticColliders.indexOf(collider);
+    if (index < 0) return;
+    this.staticColliderIndex.remove(collider);
+    this.staticColliders.splice(index, 1);
+  }
+
+  private clearStaticColliders(): void {
+    this.staticColliders.length = 0;
+    this.staticColliderCandidates.length = 0;
+    this.staticColliderIndex.clear();
+  }
+
+  private addSurfaceArea(
+    surface: SurfaceArea,
+    mutable = false,
+  ): void {
+    this.surfaceAreaIndex.add(surface, mutable);
+    this.surfaceAreas.push(surface);
+  }
+
+  private removeSurfaceArea(surface: SurfaceArea): void {
+    const index = this.surfaceAreas.indexOf(surface);
+    if (index < 0) return;
+    this.surfaceAreaIndex.remove(surface);
+    this.surfaceAreas.splice(index, 1);
+  }
+
+  private clearSurfaceAreas(): void {
+    this.surfaceAreas.length = 0;
+    this.surfaceAreaCandidates.length = 0;
+    this.surfaceAreaIndex.clear();
+  }
+
   private addStaticBox(
     x: number,
     y: number,
@@ -13110,7 +16301,7 @@ export class PortfolioGame {
       clearAbove,
       solidTop,
     };
-    this.staticColliders.push(collider);
+    this.addStaticCollider(collider);
     return collider;
   }
 
@@ -13120,6 +16311,7 @@ export class PortfolioGame {
     landingMessage?: string,
     collisionClearAbove?: number,
     occludesPlayer = true,
+    blocksRay = true,
   ): SurfaceArea | null {
     // The rendered object and its climb/collision volume describe the same
     // solid. Registering them together prevents cliffs, terraces, monitors,
@@ -13136,7 +16328,7 @@ export class PortfolioGame {
     const y = (minimum.y + maximum.y) / 2;
     const z = (minimum.z + maximum.z) / 2;
     const top = maximum.y;
-    this.addStaticBox(
+    const collider = this.addStaticBox(
       x,
       y,
       z,
@@ -13146,6 +16338,7 @@ export class PortfolioGame {
       collisionClearAbove ?? top - 0.005,
       top,
     );
+    collider.blocksRay = blocksRay;
     if (!id) return null;
     const surface: SurfaceArea = {
       id,
@@ -13159,7 +16352,7 @@ export class PortfolioGame {
       landingMessage,
       heightAt: () => top,
     };
-    this.surfaceAreas.push(surface);
+    this.addSurfaceArea(surface);
     return surface;
   }
 
@@ -13238,10 +16431,41 @@ export class PortfolioGame {
   private readonly handleVisibility = (): void => {
     this.documentVisible = !document.hidden;
     this.previousFrame = performance.now();
-    this.lastRenderedFrame = 0;
+    this.framePacer.reset();
+    this.frameTimingWindow.reset();
     if (!this.running) return;
     this.renderer.setAnimationLoop(this.documentVisible ? this.frame : null);
   };
+
+  private readonly handleWindowBlur = (): void => {
+    this.windowFocused = false;
+    this.windowFocusRecoveredAt = Number.NEGATIVE_INFINITY;
+  };
+
+  private readonly handleWindowFocus = (): void => {
+    if (!this.windowFocused) {
+      this.windowFocusRecoveredAt = performance.now();
+    }
+    this.windowFocused = true;
+  };
+
+  private consumeFocusReclaimPointer(): boolean {
+    const now = performance.now();
+    const justRecovered =
+      now - this.windowFocusRecoveredAt >= 0 &&
+      now - this.windowFocusRecoveredAt < 160;
+    const focusOnly =
+      !this.windowFocused ||
+      !document.hasFocus() ||
+      justRecovered;
+    this.windowFocused = true;
+    if (focusOnly) {
+      // Consume only the pointer that restored focus. A deliberate second
+      // click may navigate immediately, even inside the 160 ms guard.
+      this.windowFocusRecoveredAt = Number.NEGATIVE_INFINITY;
+    }
+    return focusOnly;
+  }
 
   private findPointedMathInstanceDrag(
     event: PointerEvent,
@@ -13450,6 +16674,485 @@ export class PortfolioGame {
     this.pointerRaycaster.setFromCamera(this.pointer, this.camera);
   }
 
+  private findClickNavigationTargetAt(
+    clientX: number,
+    clientY: number,
+    reusableTarget?: ClickNavigationTarget,
+  ): ClickNavigationTarget | null {
+    this.updatePointerRayAt(clientX, clientY);
+    const ray = this.pointerRaycaster.ray;
+    if (Math.abs(ray.direction.y) < 0.0001) return null;
+
+    collectClickNavigationBlockers(
+      this.zoneGroup,
+      this.clickNavigationVisualBlockers,
+    );
+    this.clickNavigationVisualHits.length = 0;
+    this.pointerRaycaster.intersectObjects(
+      this.clickNavigationVisualBlockers,
+      false,
+      this.clickNavigationVisualHits,
+    );
+    const firstVisualDistance =
+      this.clickNavigationVisualHits[0]?.distance ??
+      Number.POSITIVE_INFINITY;
+    const portalHit =
+      this.portalNetwork.findPointed(this.pointerRaycaster);
+    if (
+      portalHit &&
+      portalHit.distance <= firstVisualDistance + 0.08
+    ) {
+      const portalPosition = portalHit.portal.position;
+      const portalTarget = reusableTarget ?? {
+        position: new THREE.Vector3(),
+        markerY: 0,
+        surface: null,
+        surfaceOffsetX: 0,
+        surfaceOffsetZ: 0,
+        reachable: true,
+      };
+      portalTarget.position.set(
+        portalPosition.x,
+        this.getClickNavigationTerrainFootHeight(
+          portalPosition.x,
+          portalPosition.z,
+        ),
+        portalPosition.z,
+      );
+      portalTarget.markerY = this.getClickNavigationTerrainMarkerY(
+        portalPosition.x,
+        portalPosition.z,
+      );
+      portalTarget.surface = null;
+      portalTarget.surfaceOffsetX = 0;
+      portalTarget.surfaceOffsetZ = 0;
+      portalTarget.reachable = true;
+      portalTarget.reachable =
+        this.isClickNavigationTargetPotentiallyReachable(
+          portalTarget,
+        );
+      return portalTarget;
+    }
+    let closestDistance = Number.POSITIVE_INFINITY;
+    let target: ClickNavigationTarget | null = null;
+
+    for (const surface of this.surfaceAreas) {
+      if (surface.enabled === false) continue;
+      let surfaceY = surface.heightAt(surface.x, surface.z);
+      let intersected = false;
+      for (let pass = 0; pass < 2; pass += 1) {
+        this.clickNavigationPlane.set(up, -surfaceY);
+        if (
+          !ray.intersectPlane(
+            this.clickNavigationPlane,
+            this.clickNavigationPoint,
+          )
+        ) {
+          intersected = false;
+          break;
+        }
+        intersected = true;
+        surfaceY = surface.heightAt(
+          this.clickNavigationPoint.x,
+          this.clickNavigationPoint.z,
+        );
+      }
+      if (
+        !intersected ||
+        !this.surfaceContainsPoint(
+          surface,
+          this.clickNavigationPoint.x,
+          this.clickNavigationPoint.z,
+        )
+      ) {
+        continue;
+      }
+      const distance = ray.origin.distanceTo(
+        this.clickNavigationPoint,
+      );
+      if (
+        distance >= closestDistance ||
+        distance > firstVisualDistance + 0.58
+      ) {
+        continue;
+      }
+      closestDistance = distance;
+      target = reusableTarget ?? {
+        position: new THREE.Vector3(),
+        markerY: 0,
+        surface: null,
+        surfaceOffsetX: 0,
+        surfaceOffsetZ: 0,
+        reachable: true,
+      };
+      target.position.set(
+        this.clickNavigationPoint.x,
+        surfaceY,
+        this.clickNavigationPoint.z,
+      );
+      target.markerY = surfaceY + 0.045;
+      target.surface = surface;
+      target.surfaceOffsetX =
+        this.clickNavigationPoint.x - surface.x;
+      target.surfaceOffsetZ =
+        this.clickNavigationPoint.z - surface.z;
+      target.reachable = true;
+    }
+
+    // Terrain is not represented by SurfaceArea records because each world
+    // already owns its baseline ground rules. Project it separately, including
+    // the Falls bridge and river's distinct visible/feet heights.
+    this.clickNavigationPlane.set(up, -0.17);
+    if (
+      ray.intersectPlane(
+        this.clickNavigationPlane,
+        this.clickNavigationPoint,
+      )
+    ) {
+      const terrainMarkerY =
+        this.getClickNavigationTerrainMarkerY(
+          this.clickNavigationPoint.x,
+          this.clickNavigationPoint.z,
+        );
+      this.clickNavigationPlane.set(up, -terrainMarkerY);
+      if (
+        ray.intersectPlane(
+          this.clickNavigationPlane,
+          this.clickNavigationPoint,
+        ) &&
+        this.isInsidePlayableBounds(
+          this.clickNavigationPoint.x,
+          this.clickNavigationPoint.z,
+        )
+      ) {
+        const distance = ray.origin.distanceTo(
+          this.clickNavigationPoint,
+        );
+        if (
+          distance < closestDistance &&
+          distance <= firstVisualDistance + 0.24
+        ) {
+          const terrainFootHeight =
+            this.getClickNavigationTerrainFootHeight(
+              this.clickNavigationPoint.x,
+              this.clickNavigationPoint.z,
+            );
+          target = reusableTarget ?? {
+            position: new THREE.Vector3(),
+            markerY: 0,
+            surface: null,
+            surfaceOffsetX: 0,
+            surfaceOffsetZ: 0,
+            reachable: true,
+          };
+          target.position.set(
+            this.clickNavigationPoint.x,
+            terrainFootHeight,
+            this.clickNavigationPoint.z,
+          );
+          target.markerY = terrainMarkerY;
+          target.surface = null;
+          target.surfaceOffsetX = 0;
+          target.surfaceOffsetZ = 0;
+          target.reachable = true;
+        }
+      }
+    }
+
+    if (!target) return null;
+    target.reachable =
+      this.isClickNavigationTargetPotentiallyReachable(target);
+    return target;
+  }
+
+  private findClickNavigationTarget(
+    event: PointerEvent,
+  ): ClickNavigationTarget | null {
+    return this.findClickNavigationTargetAt(
+      event.clientX,
+      event.clientY,
+    );
+  }
+
+  private recordClickNavigationPointer(event: PointerEvent): void {
+    if (event.pointerType !== "mouse") return;
+    if (
+      !this.clickNavigationPointerInside ||
+      event.clientX !== this.clickNavigationPointerClientX ||
+      event.clientY !== this.clickNavigationPointerClientY
+    ) {
+      this.clickNavigationHoverProjectionDirty = true;
+    }
+    this.clickNavigationPointerInside = true;
+    this.clickNavigationPointerClientX = event.clientX;
+    this.clickNavigationPointerClientY = event.clientY;
+  }
+
+  private captureClickNavigationHoverProjection(): void {
+    this.clickNavigationHoverCameraWorldMatrix.copy(
+      this.camera.matrixWorld,
+    );
+    this.clickNavigationHoverProjectionMatrix.copy(
+      this.camera.projectionMatrix,
+    );
+    this.clickNavigationHoverPlayerPosition.copy(
+      this.playerPosition,
+    );
+    this.clickNavigationHoverFeetHeight =
+      this.surfaceOffset + this.jumpHeight;
+    this.clickNavigationHoverProjectionDirty = false;
+    this.clickNavigationHoverProjectionCaptured = true;
+  }
+
+  private refreshClickNavigationHoverFromPointer(): void {
+    if (
+      !this.clickNavigationPointerInside ||
+      this.clickNavigationPress ||
+      this.clickNavigation ||
+      !this.externalInputEnabled ||
+      this.isNavigationLocked() ||
+      this.pongChallenge.isActive() ||
+      this.voidTurtleRide.isRiding() ||
+      this.hasActivePointerDrag()
+    ) {
+      return;
+    }
+
+    this.camera.updateMatrixWorld();
+    const feetHeight = this.surfaceOffset + this.jumpHeight;
+    const viewChanged =
+      !this.clickNavigationHoverProjectionCaptured ||
+      !this.camera.matrixWorld.equals(
+        this.clickNavigationHoverCameraWorldMatrix,
+      ) ||
+      !this.camera.projectionMatrix.equals(
+        this.clickNavigationHoverProjectionMatrix,
+      ) ||
+      this.playerPosition.distanceToSquared(
+        this.clickNavigationHoverPlayerPosition,
+      ) > 0.0001 ||
+      Math.abs(feetHeight - this.clickNavigationHoverFeetHeight) >
+        0.0001;
+    if (
+      (!this.clickNavigationHoverProjectionDirty && !viewChanged) ||
+      this.elapsed < this.nextClickNavigationHoverProjectionAt
+    ) {
+      return;
+    }
+    this.nextClickNavigationHoverProjectionAt = this.elapsed + 1 / 30;
+    this.clickNavigationHover = this.findClickNavigationTargetAt(
+      this.clickNavigationPointerClientX,
+      this.clickNavigationPointerClientY,
+      this.clickNavigationHover ?? undefined,
+    );
+    this.captureClickNavigationHoverProjection();
+    if (!this.clickNavigationHover) {
+      this.clickNavigationMarker?.hide();
+    }
+  }
+
+  private updateClickNavigationHover(
+    event: PointerEvent,
+  ): void {
+    this.recordClickNavigationPointer(event);
+    if (
+      event.pointerType !== "mouse" ||
+      event.buttons !== 0 ||
+      this.clickNavigation !== null ||
+      !this.externalInputEnabled ||
+      this.transitioning ||
+      this.worldCollapse !== null ||
+      this.hasActivePointerDrag()
+    ) {
+      return;
+    }
+    if (event.timeStamp - this.lastClickNavigationHoverSample < 15) {
+      return;
+    }
+    this.lastClickNavigationHoverSample = event.timeStamp;
+    this.camera.updateMatrixWorld();
+    this.clickNavigationHover = this.findClickNavigationTargetAt(
+      event.clientX,
+      event.clientY,
+      this.clickNavigationHover ?? undefined,
+    );
+    this.captureClickNavigationHoverProjection();
+    if (!this.clickNavigationHover && !this.clickNavigation) {
+      this.clickNavigationMarker?.hide();
+    }
+  }
+
+  private beginClickNavigationPress(
+    event: PointerEvent,
+    focusOnly = false,
+  ): boolean {
+    if (!event.isPrimary) return false;
+    const target = this.findClickNavigationTarget(event);
+    if (!target) return false;
+    this.clickNavigationHover = target;
+    this.clickNavigationPress = {
+      pointerId: event.pointerId,
+      pointerType: event.pointerType,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      currentClientX: event.clientX,
+      currentClientY: event.clientY,
+      startedAt: this.elapsed,
+      nextRetargetAt: Number.NEGATIVE_INFINITY,
+      moved: false,
+      continuous: false,
+      focusOnly,
+      target: this.cloneClickNavigationTarget(target),
+    };
+    this.canvas.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    return true;
+  }
+
+  private updateClickNavigationPress(
+    event: PointerEvent,
+  ): void {
+    const press = this.clickNavigationPress;
+    if (!press || press.pointerId !== event.pointerId) return;
+    press.currentClientX = event.clientX;
+    press.currentClientY = event.clientY;
+    const screenDistance = Math.hypot(
+      event.clientX - press.startClientX,
+      event.clientY - press.startClientY,
+    );
+    if (
+      isContinuousClickNavigationGesture(
+        this.elapsed - press.startedAt,
+        screenDistance,
+        press.pointerType,
+      )
+    ) {
+      press.moved = true;
+      press.continuous = true;
+      press.nextRetargetAt = Number.NEGATIVE_INFINITY;
+      this.canvas.style.cursor = "move";
+      event.preventDefault();
+    }
+  }
+
+  private updateClickNavigationHold(): void {
+    const press = this.clickNavigationPress;
+    if (!press) return;
+    if (
+      !this.externalInputEnabled ||
+      this.isNavigationLocked() ||
+      this.pongChallenge.isActive() ||
+      this.voidTurtleRide.isRiding()
+    ) {
+      this.cancelClickNavigation();
+      this.cancelClickNavigationPress();
+      return;
+    }
+    const screenDistance = Math.hypot(
+      press.currentClientX - press.startClientX,
+      press.currentClientY - press.startClientY,
+    );
+    if (
+      !press.continuous &&
+      isContinuousClickNavigationGesture(
+        this.elapsed - press.startedAt,
+        screenDistance,
+        press.pointerType,
+      )
+    ) {
+      press.continuous = true;
+      press.nextRetargetAt = Number.NEGATIVE_INFINITY;
+      this.canvas.style.cursor = "move";
+    }
+    if (
+      !press.continuous ||
+      this.elapsed < press.nextRetargetAt
+    ) {
+      return;
+    }
+    press.nextRetargetAt = this.elapsed + 0.075;
+    const target = this.findClickNavigationTargetAt(
+      press.currentClientX,
+      press.currentClientY,
+    );
+    if (!target) {
+      // Camera motion can briefly carry the held screen point across a gap
+      // between raycastable surfaces. Keep the last valid destination armed
+      // instead of flashing the marker off or abandoning the route.
+      return;
+    }
+    press.target = this.cloneClickNavigationTarget(target);
+    this.retargetClickNavigation(target);
+  }
+
+  private cancelClickNavigationPress(clearHover = true): void {
+    const pointerId =
+      this.clickNavigationPress?.pointerId ?? null;
+    this.clickNavigationPress = null;
+    if (
+      pointerId !== null &&
+      this.canvas.hasPointerCapture(pointerId)
+    ) {
+      this.canvas.releasePointerCapture(pointerId);
+    }
+    if (clearHover) {
+      this.clickNavigationHover = null;
+      this.clickNavigationHoverProjectionDirty = true;
+    }
+    this.canvas.style.cursor = "";
+  }
+
+  private finishClickNavigationPress(
+    event: PointerEvent,
+  ): boolean {
+    const press = this.clickNavigationPress;
+    if (!press || press.pointerId !== event.pointerId) return false;
+    this.clickNavigationPress = null;
+    if (this.canvas.hasPointerCapture(event.pointerId)) {
+      this.canvas.releasePointerCapture(event.pointerId);
+    }
+    const shouldNavigate =
+      shouldCommitOneShotClickNavigation(
+        event.type === "pointerup",
+        press.focusOnly,
+        press.moved,
+        press.continuous,
+      );
+    if (shouldNavigate) {
+      this.beginClickNavigation(press.target);
+    } else if (press.continuous) {
+      this.cancelClickNavigation();
+      if (
+        event.type === "pointerup" &&
+        event.pointerType === "mouse"
+      ) {
+        this.clickNavigationHover = press.target;
+      }
+    }
+    this.canvas.style.cursor = "";
+    event.preventDefault();
+    return true;
+  }
+
+  private readonly handlePointerEnter = (
+    event: PointerEvent,
+  ): void => {
+    this.recordClickNavigationPointer(event);
+    if (event.buttons === 0) this.updateClickNavigationHover(event);
+  };
+
+  private readonly handlePointerLeave = (
+    event: PointerEvent,
+  ): void => {
+    if (event.pointerType === "mouse") {
+      this.clickNavigationPointerInside = false;
+      this.clickNavigationHoverProjectionDirty = false;
+    }
+    if (event.buttons !== 0 || this.clickNavigationPress) return;
+    this.clickNavigationHover = null;
+    if (!this.clickNavigation) this.clickNavigationMarker?.hide();
+  };
+
   private findPointedKickable(event: PointerEvent): Kickable | null {
     return this.findPointedKickableHit(event)?.kickable ?? null;
   }
@@ -13507,7 +17210,13 @@ export class PortfolioGame {
   private findTelekinesisSurface(x: number, z: number): SurfaceArea | null {
     let highestSurface: SurfaceArea | null = null;
     let highestSurfaceY = Number.NEGATIVE_INFINITY;
-    for (const surface of this.surfaceAreas) {
+    const candidates = this.surfaceAreaIndex.queryPoint(
+      x,
+      z,
+      0,
+      this.surfaceAreaCandidates,
+    );
+    for (const surface of candidates) {
       if (
         surface.id === "void-turtle-shell" ||
         !this.surfaceContainsPoint(surface, x, z)
@@ -13602,12 +17311,24 @@ export class PortfolioGame {
   }
 
   private readonly handleTelekinesisDown = (event: PointerEvent): void => {
+    this.recordClickNavigationPointer(event);
     if (
       event.button !== 0 ||
-      !this.externalInputEnabled ||
-      this.transitioning ||
-      this.isIgnitionPanicActive()
+      this.isWorldPointerInteractionLocked()
     ) {
+      return;
+    }
+    const focusOnly =
+      event.pointerType === "mouse" &&
+      this.consumeFocusReclaimPointer();
+    this.cancelClickNavigation();
+    this.cancelClickNavigationPress();
+    this.clickNavigationHover = null;
+    this.clickNavigationMarker?.hide();
+    if (focusOnly) {
+      this.canvas.focus({ preventScroll: true });
+      this.beginClickNavigationPress(event, true);
+      event.preventDefault();
       return;
     }
     if (this.pongChallenge.isMounted()) {
@@ -13663,7 +17384,8 @@ export class PortfolioGame {
       detachedPencil ??
       this.findPointedKickable(event);
     if (!kickable) {
-      this.beginAmbientGridDrag(event);
+      if (this.beginAmbientGridDrag(event)) return;
+      this.beginClickNavigationPress(event);
       return;
     }
     if (!detachedFromBelt && this.compassProp?.kickable === kickable) {
@@ -13862,6 +17584,21 @@ export class PortfolioGame {
   }
 
   private readonly handleTelekinesisMove = (event: PointerEvent): void => {
+    this.recordClickNavigationPointer(event);
+    if (this.isWorldPointerInteractionLocked()) {
+      this.canvas.style.cursor = "";
+      return;
+    }
+    this.updateClickNavigationPress(event);
+    if (
+      this.clickNavigationPress?.pointerId === event.pointerId
+    ) {
+      if (this.clickNavigationPress.continuous) {
+        this.canvas.style.cursor = "move";
+      }
+      event.preventDefault();
+      return;
+    }
     if (this.updateAmbientGridDrag(event)) return;
     if (this.pongChallenge.updateBallDrag(event)) return;
     if (this.updateMathInstanceDrag(event)) return;
@@ -13882,6 +17619,7 @@ export class PortfolioGame {
       !this.heldKickable ||
       this.telekinesisPointerId !== event.pointerId
     ) {
+      this.updateClickNavigationHover(event);
       if (this.findPointedPointerAction(event)) {
         this.canvas.style.cursor = "pointer";
       } else {
@@ -13940,6 +17678,7 @@ export class PortfolioGame {
     if (this.archiveSignalPuzzle.releasePointerDrag(event)) return;
     if (this.archiveOrbitPlayground.releasePointerDrag(event)) return;
     if (this.releaseAmbientGridDrag(event)) return;
+    if (this.finishClickNavigationPress(event)) return;
     if (
       !this.heldKickable ||
       this.telekinesisPointerId !== event.pointerId

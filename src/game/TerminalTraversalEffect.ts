@@ -375,6 +375,8 @@ export class TerminalTraversalEffect {
     this.disposed = true;
     scene.remove(this.effectRoot);
     for (const material of this.snapshotMaterials) material.dispose();
+    this.fragments.dispose();
+    this.scanSlices.dispose();
     this.fragments.geometry.dispose();
     this.fragments.material.dispose();
     this.scanSlices.geometry.dispose();

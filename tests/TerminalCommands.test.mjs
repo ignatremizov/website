@@ -11,5 +11,6 @@ test("terminal aliases resolve through the shared registry", () => {
   assert.equal(resolveTerminalCommandName("home"), "respawn");
   assert.equal(resolveTerminalCommandName("hitboxes"), "colliders");
   assert.equal(resolveTerminalCommandName("projects"), "portfolio");
+  assert.equal(resolveTerminalCommandName("c2"), "worm");
   assert.equal(isTerminalCommandName("collision"), true);
 });

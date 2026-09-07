@@ -321,7 +321,8 @@ export class SpellChargeEffect {
     const pulse = frame.reducedMotion
       ? 1
       : 0.9 + Math.sin(frame.elapsed * (8 + stageRank * 2)) * 0.1;
-    this.light.visible = this.orbGroup.visible;
+    this.light.visible =
+      frame.quality !== "low" && this.orbGroup.visible;
     this.light.intensity = this.light.visible
       ? orbStrength *
         pulse *

@@ -25,6 +25,7 @@ src/
 ├── shell/                         Scene-independent application state and rules
 │   ├── AchievementLedger.ts       Achievement catalog and versioned persistence
 │   ├── TerminalCommands.ts        Canonical command and alias registry
+│   ├── TerminalWorm.ts            Bounded terminal-native Snake payload and lifecycle
 │   ├── WorldNavigation.ts         Discovery and visit persistence
 │   ├── WorldPreferences.ts        Accessibility, quality-UI, and HUD preferences
 │   ├── WorldProgress.ts           Versioned progression persistence
@@ -86,6 +87,11 @@ PortfolioGame
 `main.ts` owns DOM lookup, dialogs, terminal presentation and execution, URL/history integration, persistence wiring, and lazy construction of the game. It may depend on the shell and the public `PortfolioGame` API. Code below this layer must never import `main.ts`.
 
 `src/shell/` owns state that remains meaningful when no Three.js scene exists. Shell modules may import Three.js-free types and validators from `world/WorldContracts.ts`; they must not import `PortfolioGame`, scene objects, renderer code, or math exhibits. Storage must remain guarded through `browserStorage.ts`, versioned, validated on read, and recoverable when storage is unavailable.
+
+`TerminalWorm.ts` owns the recovered terminal Snake payload, including its bounded
+canvas, controls, discrete tick timer, visibility suspension, and teardown. `main.ts`
+decides whether the server payload is unlocked and adapts terminal input/chrome; the
+minigame must not import the Three.js runtime or reach into world state.
 
 `world/WorldContracts.ts` is the lowest shared contract layer. Keep it free of Three.js, DOM access, storage, and feature-controller imports. Zone IDs, labels and aliases, quality tiers, spell ranks, and cross-layer status/progression types belong here when both the eager shell and lazy game need them.
 

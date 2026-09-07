@@ -279,9 +279,48 @@
           <small>Drag cyan paddle or packet · W/S or joystick · Q interferes · E exits</small>
         </aside>
 
-        <div id="touch-controls" class="touch-controls" hidden aria-label="Touch game controls">
-          <div id="joystick" class="joystick" aria-label="Movement joystick">
+        <div
+          id="touch-controls"
+          class="touch-controls"
+          hidden
+          role="group"
+          aria-label="Touch game controls"
+        >
+          <div
+            id="joystick"
+            class="joystick"
+            role="group"
+            aria-label="Movement joystick"
+          >
             <span id="joystick-knob" class="joystick-knob"></span>
+            <button
+              class="sr-only touch-direction"
+              type="button"
+              data-touch-horizontal="0"
+              data-touch-forward="1"
+              aria-label="Move forward"
+            >Move forward</button>
+            <button
+              class="sr-only touch-direction"
+              type="button"
+              data-touch-horizontal="-1"
+              data-touch-forward="0"
+              aria-label="Move left"
+            >Move left</button>
+            <button
+              class="sr-only touch-direction"
+              type="button"
+              data-touch-horizontal="1"
+              data-touch-forward="0"
+              aria-label="Move right"
+            >Move right</button>
+            <button
+              class="sr-only touch-direction"
+              type="button"
+              data-touch-horizontal="0"
+              data-touch-forward="-1"
+              aria-label="Move backward"
+            >Move backward</button>
           </div>
           <button id="touch-jump" class="touch-jump" type="button" aria-label="Jump">
             <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -354,7 +393,11 @@
         </header>
 
         <div class="portfolio-intro">
-          <img src="./images/ignat-forward-portrait.jpg" alt="Portrait of Ignat Remizov" />
+          <img
+            src="./images/ignat-forward-portrait.jpg"
+            alt="Portrait of Ignat Remizov"
+            decoding="async"
+          />
           <div class="portfolio-profile-copy">
             <p class="portfolio-statement">
               Right now I’m an Executive Director and the CTO at Zolvat. I helped take the
@@ -415,7 +458,7 @@
           </div>
         </section>
 
-        <section class="portfolio-section" aria-labelledby="work-heading">
+        <section class="portfolio-section portfolio-work" aria-labelledby="work-heading">
           <p class="section-label">Experience</p>
           <h3 id="work-heading">A few things I’ve actually shipped.</h3>
           <div class="work-list">
@@ -974,6 +1017,7 @@
         </header>
         <dl class="controls-list">
           <div><dt>Move</dt><dd>WASD or arrow keys</dd></div>
+          <div><dt>Click navigation</dt><dd>Click a surface or portal for one route; hold and drag to steer until release</dd></div>
           <div><dt>Sprint</dt><dd>Hold Shift</dd></div>
           <div><dt>Jump</dt><dd>Spacebar</dd></div>
           <div><dt>Cast / charge</dt><dd>Hold Q or the spell button; release to cast</dd></div>

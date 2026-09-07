@@ -477,6 +477,9 @@ export class MindReaderGlyphField {
 
   dispose(): void {
     this.parent.remove(this.markMesh, this.pickMesh, this.glitchMesh);
+    this.markMesh.dispose();
+    this.pickMesh.dispose();
+    this.glitchMesh.dispose();
     this.atlas.dispose();
     this.markMesh.geometry.dispose();
     this.markMesh.material.dispose();

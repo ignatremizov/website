@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { addBox } from "../scenePrimitives";
+import { createNeedleExperimentTexture } from "./mathTextures";
 import type {
   MathQualityTier,
   MathSpellStage,
@@ -47,6 +48,11 @@ const cordonHalfDepth = 2.58;
 const cordonClearHeight = 0.9;
 const needleCellSize = 0.72;
 const disturbanceRadius = 1.05;
+const displayLogicalWidth = 768;
+const displayLogicalHeight = 288;
+const displayScale = 0.5;
+const displayRefreshInterval = 0.25;
+const initialInteractionLabel = "Press the red needle-rain button";
 
 function createHazardTapeTexture(): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
@@ -105,7 +111,10 @@ export class BuffonNeedleExhibit {
   private readonly dummy = new THREE.Object3D();
   private readonly samples: NeedleSample[] = [];
   private readonly displayCanvas = document.createElement("canvas");
+  private readonly displayDrawing: CanvasRenderingContext2D | null;
+  private readonly displayGradient: CanvasGradient | null;
   private readonly displayTexture: THREE.CanvasTexture;
+  private readonly tabletopTexture: THREE.CanvasTexture;
   private readonly tapeTexture: THREE.CanvasTexture;
   private readonly tapeSegments: TapeSegment[] = [];
   private readonly tapeCollisionRemovers: Array<() => void> = [];
@@ -135,6 +144,7 @@ export class BuffonNeedleExhibit {
   private emissionCarry = 0;
   private displayAge = 0;
   private displayDirty = true;
+  private interactionLabel = initialInteractionLabel;
   private completionAnnounced = false;
   private tapeAge = 0;
   private tapeDeployment = 0;
@@ -152,7 +162,6 @@ export class BuffonNeedleExhibit {
   private spellBlastOriginX = 0;
   private spellBlastOriginZ = 0;
   private spellBlastStage: Exclude<MathSpellStage, "spark"> | null = null;
-  private spellBlastDelay = 0;
   private completionAnnouncementDelay = 0;
   private asteroidPositionKnown = false;
   private asteroidInsideExperiment = false;
@@ -183,6 +192,28 @@ export class BuffonNeedleExhibit {
       }),
     );
     tabletop.castShadow = false;
+    this.tabletopTexture = createNeedleExperimentTexture();
+    const tabletopSurface = new THREE.Mesh(
+      new THREE.PlaneGeometry(5.42, 4.32),
+      new THREE.MeshStandardMaterial({
+        name: "buffon-calibrated-experiment-surface-material",
+        color: 0xffffff,
+        map: this.tabletopTexture,
+        emissive: 0x09282e,
+        emissiveIntensity: 0.36,
+        roughness: 0.72,
+        metalness: 0.16,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1,
+      }),
+    );
+    tabletopSurface.name = "buffon-calibrated-experiment-surface";
+    tabletopSurface.position.y = 0.689;
+    tabletopSurface.rotation.x = -Math.PI / 2;
+    tabletopSurface.castShadow = false;
+    tabletopSurface.receiveShadow = true;
+    this.group.add(tabletopSurface);
     const stripeMaterial = new THREE.MeshBasicMaterial({
       color: 0xf3ead4,
       toneMapped: false,
@@ -217,8 +248,30 @@ export class BuffonNeedleExhibit {
     this.mesh.frustumCulled = false;
     this.group.add(this.mesh);
 
-    this.displayCanvas.width = 768;
-    this.displayCanvas.height = 288;
+    this.displayCanvas.width = displayLogicalWidth * displayScale;
+    this.displayCanvas.height = displayLogicalHeight * displayScale;
+    this.displayDrawing = this.displayCanvas.getContext("2d");
+    if (this.displayDrawing) {
+      this.displayDrawing.setTransform(
+        displayScale,
+        0,
+        0,
+        displayScale,
+        0,
+        0,
+      );
+      const gradient = this.displayDrawing.createLinearGradient(
+        0,
+        0,
+        displayLogicalWidth,
+        displayLogicalHeight,
+      );
+      gradient.addColorStop(0, "rgba(6, 22, 28, 0.96)");
+      gradient.addColorStop(1, "rgba(21, 15, 45, 0.94)");
+      this.displayGradient = gradient;
+    } else {
+      this.displayGradient = null;
+    }
     this.displayTexture = new THREE.CanvasTexture(this.displayCanvas);
     this.displayTexture.name = "buffon-live-estimate";
     this.displayTexture.colorSpace = THREE.SRGBColorSpace;
@@ -270,7 +323,7 @@ export class BuffonNeedleExhibit {
     );
     context.addInteraction({
       id: "math-buffon",
-      label: "Press the red needle-rain button",
+      label: initialInteractionLabel,
       x: buttonWorldX,
       z: buttonWorldZ,
       radius: 1.8,
@@ -469,7 +522,7 @@ export class BuffonNeedleExhibit {
       if (this.emitted >= this.cap) this.rainActive = false;
     }
 
-    this.updateSpellBlast(delta);
+    this.updateSpellBlast();
     this.updatePlayerInterference(delta);
     this.updateAsteroidInterference(delta);
 
@@ -503,21 +556,23 @@ export class BuffonNeedleExhibit {
 
     this.flushNeedleMatrices();
 
+    const sampleComplete =
+      this.emitted >= this.cap && this.settled >= this.emitted;
+    const willAnnounceCompletion =
+      !this.completionAnnounced &&
+      sampleComplete &&
+      this.completionAnnouncementDelay <= 0;
     if (this.displayDirty) {
       this.displayAge += delta;
-      if (this.displayAge >= 0.08) this.renderDisplay();
+      if (sampleComplete || this.displayAge >= displayRefreshInterval) {
+        this.renderDisplay(!willAnnounceCompletion);
+      }
     }
 
-    if (
-      !this.completionAnnounced &&
-      this.emitted >= this.cap &&
-      this.settled >= this.emitted &&
-      this.completionAnnouncementDelay <= 0
-    ) {
+    if (willAnnounceCompletion) {
       this.completionAnnounced = true;
       const estimate = this.estimatePi();
-      this.context.updateInteractionLabel(
-        "math-buffon",
+      this.updateInteractionLabel(
         this.sampleContaminated
           ? `Reset contaminated sample · ${this.disturbanceEvents} breaches`
           : `Replay needle rain · π ≈ ${this.formatEstimate(estimate, 3)}`,
@@ -1058,10 +1113,9 @@ export class BuffonNeedleExhibit {
     }
     this.spellBlastCursor = 0;
     this.spellBlastStage = stage;
-    this.spellBlastDelay = this.context.reducedMotion ? 0.2 : 0.9;
-    // The workshop-wide spell description is intentionally dense. Keep the
-    // result from replacing it until there has been time to read it, even
-    // when a high-quality batch rematerializes all 720 needles very quickly.
+    // Start the physical response in the same update as the workshop spell.
+    // Only the eventual result message waits, so readable status timing never
+    // makes the experiment feel disconnected from the cast.
     this.completionAnnouncementDelay = Math.max(
       this.completionAnnouncementDelay,
       5.6,
@@ -1089,6 +1143,7 @@ export class BuffonNeedleExhibit {
   dispose(): void {
     this.setTapeDeployed(false);
     this.displayTexture.dispose();
+    this.tabletopTexture.dispose();
     this.tapeTexture.dispose();
   }
 
@@ -1119,8 +1174,7 @@ export class BuffonNeedleExhibit {
     if (this.emitted < this.cap) {
       this.rainActive = true;
       this.completionAnnounced = false;
-      this.context.updateInteractionLabel(
-        "math-buffon",
+      this.updateInteractionLabel(
         `Press again to increase feed · ${this.settled}/${this.cap}`,
       );
       this.context.onStatus(
@@ -1163,22 +1217,17 @@ export class BuffonNeedleExhibit {
     this.spellBlastQueue.length = 0;
     this.spellBlastCursor = 0;
     this.spellBlastStage = null;
-    this.spellBlastDelay = 0;
     this.completionAnnouncementDelay = 0;
     this.displayDirty = true;
     this.renderDisplay();
   }
 
-  private updateSpellBlast(delta: number): void {
+  private updateSpellBlast(): void {
     const stage = this.spellBlastStage;
     if (
       !stage ||
       this.spellBlastCursor >= this.spellBlastQueue.length
     ) {
-      return;
-    }
-    if (this.spellBlastDelay > 0) {
-      this.spellBlastDelay = Math.max(0, this.spellBlastDelay - delta);
       return;
     }
     const qualityBatch =
@@ -1200,7 +1249,6 @@ export class BuffonNeedleExhibit {
       this.spellBlastQueue.length = 0;
       this.spellBlastCursor = 0;
       this.spellBlastStage = null;
-      this.spellBlastDelay = 0;
     }
   }
 
@@ -1312,15 +1360,12 @@ export class BuffonNeedleExhibit {
     this.mesh.instanceMatrix.needsUpdate = true;
   }
 
-  private renderDisplay(): void {
-    const drawing = this.displayCanvas.getContext("2d");
-    if (!drawing) return;
-    drawing.clearRect(0, 0, this.displayCanvas.width, this.displayCanvas.height);
-    const gradient = drawing.createLinearGradient(0, 0, 768, 288);
-    gradient.addColorStop(0, "rgba(6, 22, 28, 0.96)");
-    gradient.addColorStop(1, "rgba(21, 15, 45, 0.94)");
-    drawing.fillStyle = gradient;
-    drawing.fillRect(0, 0, 768, 288);
+  private renderDisplay(updateInteractionLabel = true): void {
+    const drawing = this.displayDrawing;
+    if (!drawing || !this.displayGradient) return;
+    drawing.clearRect(0, 0, displayLogicalWidth, displayLogicalHeight);
+    drawing.fillStyle = this.displayGradient;
+    drawing.fillRect(0, 0, displayLogicalWidth, displayLogicalHeight);
     drawing.strokeStyle = this.sampleContaminated ? "#ff7168" : "#55dce8";
     drawing.lineWidth = 8;
     drawing.strokeRect(5, 5, 758, 278);
@@ -1360,9 +1405,8 @@ export class BuffonNeedleExhibit {
     this.displayDirty = false;
     this.displayAge = 0;
 
-    if (!this.completionAnnounced) {
-      this.context.updateInteractionLabel(
-        "math-buffon",
+    if (updateInteractionLabel && !this.completionAnnounced) {
+      this.updateInteractionLabel(
         this.rainActive
           ? `Increase feed at red button · ${this.settled}/${this.cap}${
               this.sampleContaminated ? " · INVALID" : ""
@@ -1371,9 +1415,19 @@ export class BuffonNeedleExhibit {
             ? `Needles settling · ${this.settled}/${this.emitted}${
                 this.sampleContaminated ? " · INVALID" : ""
               }`
-            : "Press the red needle-rain button",
+            : this.emitted >= this.cap
+              ? `Sample complete · result pending${
+                  this.sampleContaminated ? " · INVALID" : ""
+                }`
+              : initialInteractionLabel,
       );
     }
+  }
+
+  private updateInteractionLabel(label: string): void {
+    if (label === this.interactionLabel) return;
+    this.interactionLabel = label;
+    this.context.updateInteractionLabel("math-buffon", label);
   }
 
   private doesNeedleCross(x: number, angle: number): boolean {

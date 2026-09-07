@@ -10,6 +10,8 @@ playful response, then walk, map, or teleport to another zone.
 | Input | Action |
 | --- | --- |
 | WASD / arrows | Move |
+| Click / tap a highlighted surface or portal | Follow a collision-aware route; jump or drop when the final landing is physically reachable |
+| Hold / drag across walkable ground | Continuously steer auto-move toward the pointer; release to stop |
 | Shift | Sprint |
 | Spacebar | Jump |
 | Q (hold / release) | Charge and cast the current spell |
@@ -24,12 +26,35 @@ playful response, then walk, map, or teleport to another zone.
 | Escape | Close active overlay |
 
 Sprinting across solid ground leaves a short trail of cool silver dust behind the
-player's feet. It follows actual travel rather than input alone, so walls, jumps,
+player’s feet. It follows actual travel rather than input alone, so walls, jumps,
 water, Pong control, and stationary Shift presses do not emit it.
+
+Pointer hover projects a small depth-tested sigil onto the nearest visible walkable
+surface. Cyan marks a plausible route, amber persists while the character follows it,
+and coral rejects a ledge beyond the ordinary jump envelope. Object actions,
+telekinesis, puzzle controls, and drag gestures take priority over navigation.
+Short clicks retain a one-shot destination, while holding or dragging continuously
+retargets the route and stops on release. Portal bodies resolve to their usable
+threshold approach. Manual directional movement or spell charging temporarily takes
+priority over a held route without disarming its amber marker. Auto-move replans from
+the player's current position once manual control is released and the player has
+landed, provided the pointer is still held. Pressing Jump during auto-move preserves
+route steering and carries the player toward the current marker; directional input
+plus Jump follows the manual direction instead. Click-routes reuse the Atlas A* solver
+for grounded travel and may add one final jump or bounded run-up drop using the same
+launch velocity and gravity as Spacebar. Foliage and non-solid particles do not steal
+navigation clicks;
+solid trunks and world geometry still shape the route. Parkour remains stepwise:
+the player clicks each reachable ledge rather than receiving an invented multi-jump
+route. A passive mouse marker reprojects the last screen-space cursor point while the
+camera follows the player; committed click routes and held-drag destinations remain
+fixed in world space.
 
 ## Touch controls
 
 - Left virtual joystick controls movement.
+- Its four directional equivalents remain real button controls for assistive
+  technology while the visible surface keeps analog pointer steering.
 - A right-thumb cluster keeps Interact, Jump, Lantern, and the chargeable Spell
   control together; Jump uses the same queued action as Spacebar.
 - Top controls open the Atlas, terminal, portfolio, and help; a leather-and-brass
@@ -81,10 +106,16 @@ a high fall produces a much larger pooled spray, briefly leaves the operator pro
 in the shallows, and then returns control through a visible stand-up beat.
 
 The Falls perimeter uses quality-bounded trees, bushes, and hanging vines rather than
-an empty grass disk. A chain of low marked ledges joins the side moss terraces,
-waterfall crowns, and center summit from either direction. Each ledge, visible rock
-support, terrace, and crown derives its collision footprint and top directly from its
-rendered world bounds, and the waterfall camera raises its focus with the player. The
+an empty grass disk. Tall crowns stay outside the south-camera sightline to the
+crystal cache, while four low glow-budded thickets frame the central riverbank.
+Soft-textured fireflies read at gameplay camera distance and carry localized amber
+and violet light on medium/high without raising the biome's global exposure. Crystal
+clusters retain short-range light but also paint larger additive colour pools onto
+the ground, including on low quality. A chain of low marked ledges joins the side moss
+terraces, waterfall crowns, and center summit from either direction. Each ledge,
+visible rock support, terrace, and crown derives its collision footprint and top
+directly from its rendered world bounds, and the waterfall camera raises its focus
+with the player. The
 river ribbon follows one non-self-crossing S bend, while the center cave has continuous
 rear and side walls plus a traversable roof.
 
@@ -220,6 +251,14 @@ the Math side remains a square amber-violet aperture rather than the ordinary ro
 portal kit. Physical return uses the cube-side Signal Grid arrival anchor. Atlas,
 terminal, and pencil-teleport arrivals remain neutral.
 
+Ordinary round thresholds answer a player entering their dwell radius with a
+destination-coloured lock sequence rather than core scaling alone. Concentric arcs
+draw inward across the aperture, a segmented seal forms beneath the player, scan
+rings rise through the opening, and a bounded fragment stream spirals into the core
+as its glyph accelerates. Leaving before the lock completes lets those layers recede.
+Low quality reduces the fragment batch, while reduced motion retains the static
+charge and completion cues without the rising or spiralling layers.
+
 The Field Station's loose cosmic grid scraps are line-cloth rather than rigid cards.
 Dragging a visible strand pulls its nearby knot while the remainder lags, folds, and
 slides around registered scenery, lantern posts, and the player. A strained snag can
@@ -288,7 +327,10 @@ spirals back, rotates toward its parked heading, and the player visibly steps fr
 raised shell onto the platform instead of teleporting. The turtle remains at that
 matching platform bearing. The river rune monument, Archive console, and CRT banks are
 jump-landable.
-NPCs remain visible while wandering, and the fish school remains visible and moving.
+NPCs remain visible while wandering. They yield when the player crowds or lands on
+them, then walk back into a bounded ellipse around their authored home once the player
+clears the area; avoidance never relocates that home anchor. The fish school remains
+visible and moving.
 
 Near the center falls, the camera aligns with and tightens around the cave. Portals
 face inward toward each island and charge automatically after the player remains
@@ -331,8 +373,29 @@ floor stencils and pictorial marks fade in; stowing it hides them again. Where a
 revealed mark is inspectable, its copy remains an observation rather than a command
 or solution.
 
-Signal Grid towers are inspectable edge server racks. Surge ripples their status bars;
-Thunder briefly flickers the entire rack cluster into a reboot cascade.
+Signal Grid towers are inspectable magitech edge racks with recessed compute blades,
+vented side panels, framed bus rails, front instrumentation, and crystal antenna
+cores. Their three bounded activity bars breathe at idle. Surge races through those
+bars; Thunder briefly flickers the entire rack cluster into a reboot cascade.
+Two loose patch plugs and a floppy disk form an optional three-part repair at the
+coral rack. Completion records the hidden SNEAKERNET carrier and installs
+`WORM.COM` at every terminal without changing portal-completion requirements.
+`trace` reports the mounted disk, executable path, and listening C2 endpoint at
+`192.168.0.1:31337`. `worm` and its `c2` alias run a 22 × 14 Snake board inside the
+terminal with arrows/WASD, swipe and on-screen steering, Space pause, Enter restart,
+and Escape or `^C` unload. A two-turn queue preserves rapid corner sequences while
+still rejecting direct reversals. Causal firewall and route-collision failures replace
+the generic game-over label. Its discrete clock starts at 150 ms, sheds 2 ms per
+packet, and stops accelerating at a 90 ms floor; reduced-motion play uses a slower
+175–110 ms range. The timer stops when the terminal closes and suspends while the
+document is hidden. Filling all 308 cells triggers a bounded green/gold `ROOT PWNED`
+takeover sequence. This is a local mastery ending, not a persisted exploration
+achievement, portal milestone, or Event Horizon prerequisite.
+`worm autorun` follows a complete Hamiltonian board cycle while placing every packet
+uniformly at random among the currently free addresses. The route remains safe, but
+the chase pattern and completion time vary naturally. Any directional input
+immediately hands control to the player. An assisted round remains visibly marked
+and cannot overwrite the manual high score.
 The Space Archive observability lens's baseline Spark probe remains a simple outward
 scan. Once Surge is available, inspection or a cast emits a pooled
 cyan/green/violet metrics-log-trace cascade around the lens. Thunder increases
@@ -423,7 +486,8 @@ surfaces when it is deliberately placed, and fades while telekinesis lifts it.
 The room-scale planets also form a lightweight space-pinball field. Walking into a
 planet gives it radial and tangential momentum, briefly flashes and wobbles its body,
 and nudges the player back. A displaced planet can cross an adjacent lane and exchange
-momentum with another planet. Each visible planet is also a direct mouse/touch target.
+momentum with another planet. All five planets remain visible, physical, and directly
+mouse/touch targetable at every quality tier.
 On touch devices, separate fingers may hold separate planets while another remains on
 the joystick. Radial dragging pulls a world out of lane, while its own release velocity
 is decomposed into radial travel and angular boost so a tangential fling changes
@@ -506,6 +570,8 @@ lantern
 lantern on
 lantern off
 clear
+trace
+worm
 ritual
 ritual open
 ```

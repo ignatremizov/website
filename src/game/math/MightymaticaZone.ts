@@ -4,6 +4,7 @@ import { BuffonNeedleExhibit } from "./BuffonNeedleExhibit";
 import { CubeReturnAperture } from "./CubeReturnAperture";
 import { FallingSolidsGarden } from "./FallingSolidsGarden";
 import { InfiniteChocolateExhibit } from "./InfiniteChocolateExhibit";
+import { createSierpinskiUnderfloorTexture } from "./mathTextures";
 import { MindReaderExhibit } from "./MindReaderExhibit";
 import { createPythagorasCurator } from "./PythagorasCurator";
 import {
@@ -187,6 +188,7 @@ class MightymaticaZone implements MightymaticaZoneRuntime {
     floor.name = "world-terrain-surface";
     floor.castShadow = false;
 
+    this.createSierpinskiUnderfloor();
     this.createSierpinskiFloor(sierpinskiMaterial);
     this.createDimensionFrame();
 
@@ -385,6 +387,28 @@ class MightymaticaZone implements MightymaticaZoneRuntime {
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     this.context.root.add(mesh);
+  }
+
+  private createSierpinskiUnderfloor(): void {
+    const texture = createSierpinskiUnderfloorTexture();
+    this.trackedTextures.push(texture);
+    const material = new THREE.MeshBasicMaterial({
+      name: "mightymatica-deep-fractal-underfloor-material",
+      color: 0xb8b4e6,
+      map: texture,
+      toneMapped: false,
+      fog: true,
+    });
+    const underfloor = new THREE.Mesh(
+      new THREE.PlaneGeometry(27, 27),
+      material,
+    );
+    underfloor.name = "mightymatica-deep-fractal-underfloor";
+    underfloor.position.y = 0.072;
+    underfloor.rotation.x = -Math.PI / 2;
+    underfloor.castShadow = false;
+    underfloor.receiveShadow = false;
+    this.context.root.add(underfloor);
   }
 
   private createDimensionFrame(): void {

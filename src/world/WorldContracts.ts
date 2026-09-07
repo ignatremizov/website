@@ -96,6 +96,8 @@ export interface WorldStatusOptions {
   kind?: "notice" | "speech" | "achievement";
   speaker?: string;
   title?: string;
+  /** Exact speech terms rendered in the terminal typeface. */
+  monospaceTerms?: readonly string[];
   toastPolicy?: "replace" | "after-achievement" | "alongside-achievement";
   /** Protected narration admitted while the destructive finale owns the HUD. */
   channel?: "world" | "event-horizon";

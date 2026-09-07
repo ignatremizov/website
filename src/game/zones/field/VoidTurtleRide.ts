@@ -573,6 +573,7 @@ export class VoidTurtleRide {
   private createVoidTurtle(parent: THREE.Group, x: number, z: number): void {
     const turtle = new THREE.Group();
     turtle.name = "void-turtle-world-body";
+    turtle.userData.clickNavigationPassThrough = true;
     turtle.position.set(x, 0.08, z);
     // Face away from the station so the head does not occupy the jump/landing lane.
     turtle.rotation.y = Math.atan2(x, z);
@@ -1393,9 +1394,9 @@ export class VoidTurtleRide {
       }
     }
     const ambientMotionScale = this.host.isReducedMotion() ? 0.24 : 1;
-    if (turtle.awake) {
-      turtle.moonOrbit.rotation.y += delta * 0.22 * ambientMotionScale;
-    }
+    const moonOrbitSpeed = turtle.awake ? 0.22 : 0.13;
+    turtle.moonOrbit.rotation.y +=
+      delta * moonOrbitSpeed * ambientMotionScale;
     const finAmplitude =
       (turtle.riding
         ? turtle.ridePhase === "dismounting"
