@@ -35,3 +35,7 @@ website design.sketch
 node_modules/
 dist/
 .playwright-cli/
+
+# Local release/agent checkpoints and workflow-only cross-repository checkout
+COMMUNICATION.md
+.release/

@@ -6,13 +6,15 @@ import type {
   WorldStatusOptions,
 } from "../../../world/WorldContracts";
 import type { Kickable } from "../../Kickable";
-import type { SurfaceArea } from "../../SurfaceSelection";
+import { surfaceOverlapsCircle, type SurfaceArea } from "../../SurfaceSelection.ts";
 import type { WorldCollapseFrame } from "../../WorldCollapseSequence";
-import { addBox, addCylinder } from "../../scenePrimitives";
+import { addBox, addCylinder } from "../../scenePrimitives.ts";
 import {
   fallsRitualLightCapacity,
   getFallsPointLightBudget,
-} from "./FallsLightBudget";
+} from "./FallsLightBudget.ts";
+import { fallsLandmarks, getFallsTerraceHeight, isAtFallsSocketHeight } from "./FallsLayout.ts";
+import { socketPlacementIsBlocked } from "./FallsSocketSelection.ts";
 
 type RuneId = "moon" | "tide" | "ember";
 
@@ -88,7 +90,15 @@ export interface FallsRuneRitualHost {
     halfDepth: number,
     clearAbove?: number,
     solidTop?: number,
-  ) => void;
+  ) => {
+    stepHeight?: number;
+    intersectsHorizontal?: (x: number, z: number, radius: number) => boolean;
+  };
+  registerSolid: (
+    object: THREE.Object3D,
+    id: string | null,
+    stepHeight?: number,
+  ) => SurfaceArea | null;
   addRemovableStaticBox: (
     x: number,
     y: number,
@@ -131,6 +141,7 @@ export interface FallsRuneRitualHost {
   claimChestReward: () => FallsChestRewardResolution;
   onStatus: (message: string, options?: WorldStatusOptions) => void;
   getPlayerPosition: () => Readonly<THREE.Vector3>;
+  getPlayerFeetHeight: () => number;
   getHeldKickable: () => Kickable | null;
   getTelekinesisPlacementSurface: () => SurfaceArea | null;
   getQuality: () => QualityTier;
@@ -150,6 +161,7 @@ interface RitualCrystalCarry {
   shadowRing: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
   origin: THREE.Vector3;
   socketedAt: RuneId | null;
+  blockedSocket: RuneId | null;
   shatteredAtSocket: RuneId | null;
   impactCooldownUntil: number;
   restorationAge: number;
@@ -227,6 +239,8 @@ interface RuneSocketState {
   reveal: number;
   revealUntil: number;
   growth: number;
+  /** Last rendered growth, capped when every root has reached full size. */
+  rootMatrixGrowth: number;
 }
 
 interface RitualDecoyCrystalState {
@@ -283,7 +297,7 @@ interface RitualCrystalRestorationResult {
 
 interface ChestBurst {
   coins: THREE.InstancedMesh;
-  light: THREE.PointLight;
+  lightPosition: THREE.Vector3;
   dummy: THREE.Object3D;
   velocities: Float32Array;
   age: number;
@@ -298,6 +312,11 @@ const runeCrystalDescriptors: Record<
   tide: { color: "cyan", symbol: "current", title: "Tide" },
   ember: { color: "amber", symbol: "flame", title: "Ember" },
 };
+
+// Intact clusters have a base-origin body, independent of breathing facets,
+// restoration scale, and the aura extending below the visible mineral tips.
+// Use the same envelope while held, released, and resting (as the frog does).
+const ritualCrystalCollisionHeight = 2.15;
 
 const runeCrystalShardTemplates = [
   {
@@ -348,6 +367,7 @@ export class FallsRuneRitual {
   private chestPrize: THREE.Mesh | null = null;
   private chestBurst: ChestBurst | null = null;
   private chestOpened = false;
+  private chestLightLeased = false;
   private caveSeal: THREE.Group | null = null;
   private releaseCaveSealCollision: (() => void) | null = null;
   private readonly puzzleWaterfallPanels: THREE.Mesh<
@@ -372,7 +392,11 @@ export class FallsRuneRitual {
   private runeProgress = 0;
   private fantasyPuzzleSolved = false;
 
-  constructor(private readonly host: FallsRuneRitualHost) {}
+  private readonly host: FallsRuneRitualHost;
+
+  constructor(host: FallsRuneRitualHost) {
+    this.host = host;
+  }
 
   registerWaterfallPanel(
     panel: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>,
@@ -385,32 +409,36 @@ export class FallsRuneRitual {
       throw new Error("The Falls rune ritual is already mounted.");
     }
     this.root = parent;
-    this.createHiddenChest(parent, 0, -11.65);
-    this.host.addStaticBox(0, 0.45, -11.65, 0.85, 0.5, 0.6, 1.2);
+    const chest = fallsLandmarks.chest;
+    this.createHiddenChest(parent, chest.x, chest.z, chest.y);
+    this.host.addStaticBox(chest.x, chest.y + 0.45, chest.z, 0.85, 0.5, 0.6, chest.y + 1.2);
     const chestInteraction = this.host.addInteraction(
       "waterfall-chest",
       "Inspect weathered chest",
-      0,
-      -11.65,
+      chest.x,
+      chest.z,
       1.9,
       () => this.openHiddenChest(),
       false,
-      1.35,
+      chest.y + 1.35,
     );
-    chestInteraction.isAvailable = () => this.fantasyPuzzleSolved;
-    this.createCaveSeal(parent, 0, -9.12);
+    chestInteraction.isAvailable = () =>
+      this.fantasyPuzzleSolved && this.host.getPlayerFeetHeight() >= chest.y - 0.2;
+    this.createCaveSeal(parent, fallsLandmarks.cave.x, fallsLandmarks.cave.z + 0.38, chest.y);
 
     this.createRuneEffects(parent);
-    const crystalCache = this.createRitualCrystalCache(parent, 8.4, 6.3);
+    const cache = fallsLandmarks.cache;
+    const crystalCache = this.createRitualCrystalCache(parent, cache.x, cache.z, cache.y);
     const runeConfigs = [
-      ["moon", -7.3, -3.7, 9.65, 6.85, this.host.colors.violet],
-      ["tide", -6, 7, 7.15, 5.48, this.host.colors.cyan],
-      ["ember", 5, -4.4, 8.4, 7.22, this.host.colors.amber],
+      ["moon", fallsLandmarks.sockets.moon, cache.x + 1.05, cache.z + 0.65, this.host.colors.violet],
+      ["tide", fallsLandmarks.sockets.tide, cache.x - 1.05, cache.z - 0.65, this.host.colors.cyan],
+      ["ember", fallsLandmarks.sockets.ember, cache.x, cache.z + 0.65, this.host.colors.amber],
     ] as const;
 
-    for (const [id, socketX, socketZ, sourceX, sourceZ, color] of runeConfigs) {
+    for (const [id, socket, sourceX, sourceZ, color] of runeConfigs) {
+      const { x: socketX, z: socketZ, y: socketY } = socket;
       const label = "Inspect socket";
-      this.createRuneSocket(parent, id, socketX, socketZ, color);
+      this.createRuneSocket(parent, id, socketX, socketZ, color, socketY);
       const rune = this.createRuneCrystal(
         parent,
         id,
@@ -421,6 +449,7 @@ export class FallsRuneRitual {
         socketZ,
         color,
         crystalCache,
+        socketY,
       );
       this.runeStones.set(id, rune);
       this.fishBaitSources.push(rune);
@@ -434,9 +463,10 @@ export class FallsRuneRitual {
       );
       looseCrystalInteraction.isAvailable = () =>
         rune.carry.socketedAt === null &&
+        Math.abs(this.host.getPlayerFeetHeight() - this.getRitualCrystalTargetObject(rune.carry).position.y) < 1.7 &&
         (!rune.broken ||
           this.getRitualCrystalAnchorShard(rune.carry) !== null);
-      this.host.addInteraction(
+      const socketInteraction = this.host.addInteraction(
         `rune-${id}`,
         label,
         socketX,
@@ -444,28 +474,30 @@ export class FallsRuneRitual {
         2.15,
         () => this.inspectOrActivateRuneSocket(id),
       );
+      socketInteraction.isAvailable = () =>
+        Math.abs(this.host.getPlayerFeetHeight() - socketY) < 1.3;
     }
     this.createRitualDecoyCrystal(
       parent,
       "verdant",
-      7.03,
-      6.86,
+      cache.x - 1.05,
+      cache.z + 0.65,
       this.host.materials.green,
       crystalCache,
     );
     this.createRitualDecoyCrystal(
       parent,
       "coral",
-      9.72,
-      5.55,
+      cache.x + 1.05,
+      cache.z - 0.65,
       this.host.materials.coral,
       crystalCache,
     );
     this.createRitualDecoyCrystal(
       parent,
       "pale",
-      8.45,
-      5.28,
+      cache.x,
+      cache.z - 0.65,
       this.host.materials.parchment,
       crystalCache,
     );
@@ -482,6 +514,7 @@ export class FallsRuneRitual {
     this.chestPrize = null;
     this.chestBurst = null;
     this.chestOpened = false;
+    this.chestLightLeased = false;
     this.caveSeal = null;
     this.releaseCaveSealCollision = null;
     this.puzzleWaterfallPanels.length = 0;
@@ -518,7 +551,6 @@ export class FallsRuneRitual {
     if (this.chestBurst && this.chestBurst.age >= 2.2) {
       this.chestBurst.count =
         this.host.getQuality() === "low" ? 10 : 18;
-      this.chestBurst.coins.count = this.chestBurst.count;
     }
     if (this.runeSparkles) {
       const quality = this.host.getQuality();
@@ -543,7 +575,7 @@ export class FallsRuneRitual {
       slot.light.visible = index < budget.ritualVisibleSlots;
       if (
         index >= budget.ritualAmbientSlots &&
-        !(index === 0 && tinkleActive)
+        !(index === 0 && (tinkleActive || (this.chestBurst?.age ?? 3) < 2.2))
       ) {
         slot.light.intensity = 0;
         slot.target = null;
@@ -685,7 +717,11 @@ export class FallsRuneRitual {
           progress,
         );
         trace.positions[offset + 1] =
-          1.12 + Math.sin(progress * Math.PI) * 0.72;
+          THREE.MathUtils.lerp(
+            segment === 0 ? this.host.getPlayerFeetHeight() : previous?.position.y ?? 0,
+            end.position.y,
+            progress,
+          ) + 1.12 + Math.sin(progress * Math.PI) * 0.72;
         trace.positions[offset + 2] = THREE.MathUtils.lerp(
           startZ,
           end.position.z,
@@ -830,9 +866,9 @@ export class FallsRuneRitual {
     }
   }
 
-  private createHiddenChest(parent: THREE.Group, x: number, z: number): void {
+  private createHiddenChest(parent: THREE.Group, x: number, z: number, y: number): void {
     const chest = new THREE.Group();
-    chest.position.set(x, 0, z);
+    chest.position.set(x, y, z);
     addBox(chest, [1.55, 0.66, 1], [0, 0.38, 0], this.host.materials.wood);
     addBox(
       chest,
@@ -881,23 +917,22 @@ export class FallsRuneRitual {
       this.host.materials.amber,
       maximumCoins,
     );
-    coins.count = this.host.getQuality() === "low" ? 10 : maximumCoins;
-    coins.visible = false;
+    // Keep the zero-instance mesh in the render list from zone entry. This
+    // prepares its instanced material/buffers before the reward's first frame,
+    // without drawing coins or changing the scene's lighting at interaction time.
+    coins.count = 0;
+    coins.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     coins.frustumCulled = false;
     coins.renderOrder = 5;
+    coins.userData.clickNavigationPassThrough = true;
     chest.add(coins);
-    const burstLight = new THREE.PointLight(this.host.colors.amber, 0, 8, 2);
-    burstLight.position.set(0, 1.2, 0);
-    burstLight.castShadow = false;
-    burstLight.visible = false;
-    chest.add(burstLight);
     this.chestBurst = {
       coins,
-      light: burstLight,
+      lightPosition: new THREE.Vector3(x, y + 1.2, z),
       dummy: new THREE.Object3D(),
       velocities: new Float32Array(maximumCoins * 3),
       age: 3,
-      count: coins.count,
+      count: this.host.getQuality() === "low" ? 10 : maximumCoins,
     };
     parent.add(chest);
   }
@@ -946,9 +981,12 @@ export class FallsRuneRitual {
     burst.age = 0;
     burst.count = this.host.getQuality() === "low" ? 10 : 18;
     burst.coins.count = burst.count;
-    burst.coins.visible = true;
-    burst.light.visible = true;
-    burst.light.intensity = 13;
+    // Slot zero is already compiled into every quality tier. The reward
+    // temporarily takes priority over tinkle/ambient light instead of adding
+    // a new point-light shader variant for every lit material in the world.
+    this.runeTinkleLightLeased = false;
+    this.runeTinkleAge = 2;
+    this.runeTinkleBaseIntensity = 0;
     for (let index = 0; index < burst.count; index += 1) {
       const angle = index * 2.39996 + 0.35;
       const speed = 0.85 + (index % 5) * 0.18;
@@ -990,46 +1028,63 @@ export class FallsRuneRitual {
       burst.coins.setMatrixAt(index, burst.dummy.matrix);
     }
     burst.coins.instanceMatrix.needsUpdate = true;
-    burst.light.intensity =
-      fade * (7 + Math.max(0, Math.sin(time * 18)) * 6);
     if (burst.age >= 2.2) {
-      burst.coins.visible = false;
-      burst.light.intensity = 0;
-      burst.light.visible = false;
+      burst.coins.count = 0;
     }
   }
 
-  private createCaveSeal(parent: THREE.Group, x: number, z: number): void {
+  private createCaveSeal(parent: THREE.Group, x: number, z: number, y: number): void {
     const seal = new THREE.Group();
-    seal.position.set(x, 0, z);
-    const coreMaterial = new THREE.MeshBasicMaterial({
-      color: this.host.colors.violet,
-      transparent: true,
-      opacity: 0.28,
-      depthWrite: false,
-      side: THREE.DoubleSide,
+    seal.position.set(x, y, z);
+    // A damp fracture face hides behind the falling water, not a portal.
+    // Keep all decoration in the seal group so unlocking removes it together.
+    const stone = new THREE.MeshStandardMaterial({
+      color: 0x455b5b,
+      roughness: 0.72,
+      flatShading: true,
     });
-    const core = new THREE.Mesh(new THREE.CircleGeometry(0.93, 24), coreMaterial);
-    core.position.y = 1.22;
-    seal.add(core);
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(0.98, 0.08, 5, 24),
-      this.host.materials.violet,
+    const outline = new THREE.Shape([
+      new THREE.Vector2(-0.96, 0),
+      new THREE.Vector2(0.96, 0),
+      new THREE.Vector2(0.99, 0.72),
+      new THREE.Vector2(0.92, 1.64),
+      new THREE.Vector2(0.68, 2.34),
+      new THREE.Vector2(0.12, 2.48),
+      new THREE.Vector2(-0.64, 2.38),
+      new THREE.Vector2(-0.98, 1.7),
+      new THREE.Vector2(-1.02, 0.64),
+    ]);
+    const core = new THREE.Mesh(
+      new THREE.ExtrudeGeometry(outline, { depth: 0.22, bevelEnabled: false, steps: 1 }),
+      stone,
     );
-    ring.position.y = 1.22;
-    seal.add(ring);
+    core.position.z = -0.14;
+    seal.add(core);
+    const glyphMaterial = new THREE.MeshStandardMaterial({
+      color: 0x738e83,
+      emissive: 0x324e46,
+      emissiveIntensity: 0.12,
+      roughness: 0.85,
+    });
+    const strokeGeometry = new THREE.BoxGeometry(0.025, 0.22, 0.012);
+    for (let index = 0; index < 5; index += 1) {
+      const stroke = new THREE.Mesh(strokeGeometry, glyphMaterial);
+      stroke.position.set(-0.18 + index * 0.09, 1.15 + (index % 2) * 0.13, 0.09);
+      stroke.rotation.z = index % 2 ? -0.45 : 0.45;
+      seal.add(stroke);
+    }
     parent.add(seal);
     this.caveSeal = seal;
     // Block the unsolved cave entrance only across the seal's visible height;
     // the waterfall crown above it must remain traversable.
     this.releaseCaveSealCollision = this.host.addRemovableStaticBox(
       x,
-      1.22,
+      y + 1.22,
       z,
       0.92,
       1.22,
       0.16,
-      2.44,
+      y + 2.44,
     );
   }
 
@@ -1145,27 +1200,42 @@ export class FallsRuneRitual {
     parent: THREE.Group,
     x: number,
     z: number,
+    y: number,
   ): SurfaceArea {
     const base = addBox(
       parent,
-      [4.7, 0.24, 3.25],
-      [x, 0.12, z],
+      [3.6, 0.24, 3.25],
+      [x, y + 0.12, z],
       this.host.materials.darkStone,
     );
     base.castShadow = false;
+    // The upper deck touches an approaching body's radius before its centre
+    // reaches the narrow base tread. Keep its physical top within one 0.28
+    // step from the terrace, without changing the crystal source plane.
     const deck = addBox(
       parent,
-      [4.38, 0.07, 2.93],
-      [x, 0.275, z],
+      [3.28, 0.04, 2.93],
+      [x, y + 0.26, z],
       this.host.materials.mossDark,
     );
     deck.castShadow = false;
+    const baseSupport = this.host.registerSolid(base, "ritual-crystal-cache-base", 0.28);
+    if (baseSupport) {
+      baseSupport.requiresJump = false;
+      baseSupport.stepHeight = 0.28;
+      baseSupport.snapGroundedHeight = true;
+      baseSupport.supportMargin = 0;
+      baseSupport.edgeGrace = 0;
+    }
+    // Keep the established +0.32 cache/source plane near the decorative ring;
+    // the deck adds solid sides/underside without a competing top surface.
+    this.host.registerSolid(deck, null, 0.28);
 
     for (const [offsetX, offsetZ] of [
-      [-2.08, -1.36],
-      [2.08, -1.36],
-      [-2.08, 1.36],
-      [2.08, 1.36],
+      [-1.54, -1.36],
+      [1.54, -1.36],
+      [-1.54, 1.36],
+      [1.54, 1.36],
     ] as const) {
       const marker = addCylinder(
         parent,
@@ -1173,19 +1243,19 @@ export class FallsRuneRitual {
         0.16,
         0.38,
         6,
-        [x + offsetX, 0.42, z + offsetZ],
+        [x + offsetX, y + 0.42, z + offsetZ],
         this.host.materials.brass,
       );
       marker.castShadow = false;
     }
 
     const cacheRing = new THREE.Mesh(
-      new THREE.TorusGeometry(1.68, 0.045, 4, 30),
+      new THREE.TorusGeometry(1.35, 0.045, 4, 30),
       this.host.materials.violet,
     );
-    cacheRing.position.set(x, 0.33, z);
+    cacheRing.position.set(x, y + 0.33, z);
     cacheRing.rotation.x = Math.PI / 2;
-    cacheRing.scale.y = 0.68;
+    cacheRing.scale.y = 0.84;
     cacheRing.castShadow = false;
     parent.add(cacheRing);
 
@@ -1193,13 +1263,17 @@ export class FallsRuneRitual {
       id: "ritual-crystal-cache",
       x,
       z,
-      halfWidth: 2.18,
+      halfWidth: 1.63,
       halfDepth: 1.46,
       requiresJump: false,
-      heightAt: () => 0.32,
+      stepHeight: 0.28,
+      snapGroundedHeight: true,
+      supportMargin: 0,
+      edgeGrace: 0,
+      heightAt: () => y + 0.32,
     };
     this.host.addSurface(surface);
-    this.host.addInteraction(
+    const interaction = this.host.addInteraction(
       "ritual-crystal-cache",
       "Inspect crystal cache",
       x,
@@ -1207,6 +1281,7 @@ export class FallsRuneRitual {
       3,
       () => this.inspectRitualCrystalCache(surface),
     );
+    interaction.isAvailable = () => Math.abs(this.host.getPlayerFeetHeight() - y) < 1.2;
     return surface;
   }
 
@@ -1272,10 +1347,11 @@ export class FallsRuneRitual {
     x: number,
     z: number,
     colorValue: THREE.ColorRepresentation,
+    y: number,
   ): void {
     const group = new THREE.Group();
     group.name = `rune-socket-${id}`;
-    group.position.set(x, 0, z);
+    group.position.set(x, y, z);
 
     const base = addCylinder(
       group,
@@ -1291,7 +1367,9 @@ export class FallsRuneRitual {
       new THREE.TorusGeometry(0.73, 0.07, 5, 24),
       this.host.materials.parchment,
     );
-    ring.position.y = 0.24;
+    // Keep the entire lip within one walking step from the terrace. A body's
+    // radius touches this ring before its centre reaches the narrow base rim.
+    ring.position.y = 0.21;
     ring.rotation.x = Math.PI / 2;
     ring.castShadow = false;
     group.add(ring);
@@ -1303,7 +1381,7 @@ export class FallsRuneRitual {
       toneMapped: false,
     });
     const symbol = new THREE.Group();
-    symbol.position.y = 0.265;
+    symbol.position.y = 0.235;
     const addInlay = (
       shape: THREE.Shape,
       material: THREE.Material = symbolMaterial,
@@ -1452,9 +1530,35 @@ export class FallsRuneRitual {
     group.add(roots);
 
     parent.add(group);
+    // Round footprints avoid filling the square corners of the cylinder's
+    // AABB. The shallow bowl is supported at its lip so released bodies do
+    // not sink through the inlay; puzzle seating still uses socketPosition.
+    for (const [suffix, radius, bottom, top] of [
+      ["base", 1.08, 0.03, 0.21],
+      ["bowl", 0.8, 0.21, 0.28],
+    ] as const) {
+      const collider = this.host.addStaticBox(
+        x, y + (bottom + top) / 2, z,
+        radius, (top - bottom) / 2, radius,
+        y + top - 0.005, y + top,
+      );
+      collider.stepHeight = 0.28;
+      collider.intersectsHorizontal = (px, pz, bodyRadius) =>
+        (px - x) ** 2 + (pz - z) ** 2 < (radius + bodyRadius) ** 2;
+      const supportRadius = suffix === "base" ? 0.92 : radius;
+      this.host.addSurface({
+        id: `ritual-socket-${id}-${suffix}`,
+        x, z, halfWidth: supportRadius, halfDepth: supportRadius,
+        requiresJump: false, stepHeight: 0.28, snapGroundedHeight: true,
+        supportMargin: 0, edgeGrace: 0, debugResolution: 8,
+        contains: (px, pz, margin) =>
+          Math.hypot(px - x, pz - z) <= Math.max(0, supportRadius + margin),
+        heightAt: () => y + top,
+      });
+    }
     this.runeSockets.set(id, {
       id,
-      position: new THREE.Vector3(x, 0, z),
+      position: new THREE.Vector3(x, y, z),
       color: socketColor,
       dormantColor,
       symbolMaterial,
@@ -1464,6 +1568,7 @@ export class FallsRuneRitual {
       reveal: 0,
       revealUntil: 0,
       growth: 0,
+      rootMatrixGrowth: Number.NaN,
     });
   }
 
@@ -1685,6 +1790,7 @@ export class FallsRuneRitual {
       0.91,
       "",
     );
+    kickable.collisionHeight = ritualCrystalCollisionHeight;
     const { shadow, shadowRing } = this.createRitualCrystalShadow(parent, color);
     const carry: RitualCrystalCarry = {
       id,
@@ -1696,6 +1802,7 @@ export class FallsRuneRitual {
       shadowRing,
       origin: group.position.clone(),
       socketedAt: null,
+      blockedSocket: null,
       shatteredAtSocket: null,
       impactCooldownUntil: 0,
       restorationAge: 0,
@@ -1777,6 +1884,10 @@ export class FallsRuneRitual {
     );
     interaction.isAvailable = () =>
       carry.socketedAt === null &&
+      Math.abs(
+        this.host.getPlayerFeetHeight() -
+          this.getRitualCrystalTargetObject(carry).position.y,
+      ) < 1.7 &&
       (!state.broken ||
         this.getRitualCrystalAnchorShard(carry) !== null);
   }
@@ -1791,6 +1902,7 @@ export class FallsRuneRitual {
     socketZ: number,
     colorValue: THREE.ColorRepresentation,
     cache: SurfaceArea,
+    socketY: number,
   ): RuneCrystalState {
     const color = new THREE.Color(colorValue);
     const group = new THREE.Group();
@@ -1922,6 +2034,7 @@ export class FallsRuneRitual {
       0.91,
       "",
     );
+    crystalKickable.collisionHeight = ritualCrystalCollisionHeight;
     const { shadow, shadowRing } = this.createRitualCrystalShadow(parent, color);
     const carry: RitualCrystalCarry = {
       id,
@@ -1933,6 +2046,7 @@ export class FallsRuneRitual {
       shadowRing,
       origin: group.position.clone(),
       socketedAt: null,
+      blockedSocket: null,
       shatteredAtSocket: null,
       impactCooldownUntil: 0,
       restorationAge: 0,
@@ -1991,7 +2105,7 @@ export class FallsRuneRitual {
       shards,
       dummy: new THREE.Object3D(),
       color,
-      socketPosition: new THREE.Vector3(socketX, 0, socketZ),
+      socketPosition: new THREE.Vector3(socketX, socketY, socketZ),
       carry,
       placed: false,
       hits: 0,
@@ -2078,7 +2192,6 @@ export class FallsRuneRitual {
     for (const carry of this.ritualCrystals) {
       if (
         !carry.kickable.enabled ||
-        carry.kickable === this.host.getHeldKickable() ||
         carry.socketedAt
       ) {
         continue;
@@ -2087,7 +2200,7 @@ export class FallsRuneRitual {
       let nearestRune: RuneCrystalState | null = null;
       let nearestDistance = Number.POSITIVE_INFINITY;
       for (const rune of this.runeStones.values()) {
-        if (this.getRitualSocketOccupant(rune.id)) continue;
+        if (!isAtFallsSocketHeight(carry.object.position.y, rune.socketPosition.y)) continue;
         const dx = carry.object.position.x - rune.socketPosition.x;
         const dz = carry.object.position.z - rune.socketPosition.z;
         const distance = dx * dx + dz * dz;
@@ -2097,16 +2210,21 @@ export class FallsRuneRitual {
         }
       }
 
-      if (!nearestRune) {
+      const blocked = socketPlacementIsBlocked(
+        nearestRune?.id ?? null,
+        carry.blockedSocket,
+        nearestRune !== null && this.getRitualSocketOccupant(nearestRune.id) !== null,
+      );
+      carry.blockedSocket = blocked ? nearestRune!.id : null;
+      if (!nearestRune || blocked || carry.kickable === this.host.getHeldKickable()) {
         continue;
       }
       const planarSpeedSquared =
         carry.kickable.velocity.x * carry.kickable.velocity.x +
         carry.kickable.velocity.z * carry.kickable.velocity.z;
-      // Telekinesis holds the cluster by its visual centre, well above its
-      // physical base. A generous vertical capture volume lets the visible
-      // centre align with the socket instead of requiring an invisible offset.
-      if (planarSpeedSquared > 4.84 || carry.object.position.y > 2.55) continue;
+      // Crystal origins sit above their physical bases. The height check above
+      // accepts their visible placement; wait for a gentle release before seating.
+      if (planarSpeedSquared > 4.84) continue;
 
       this.seatRitualCrystal(carry, nearestRune.id, true);
     }
@@ -2136,7 +2254,9 @@ export class FallsRuneRitual {
     carry.kickable.velocity.set(0, 0, 0);
     carry.kickable.onPlatform = false;
     carry.socketedAt = socketId;
+    carry.blockedSocket = null;
     carry.shatteredAtSocket = null;
+    this.blockOverlappingSocketCandidates(socketId);
     this.syncRitualSocketPlacementStates();
     this.triggerRitualCrystalTinkle(carry, 0.82);
     this.updateRuneInteractionLabels();
@@ -2164,6 +2284,21 @@ export class FallsRuneRitual {
     );
   }
 
+  private blockOverlappingSocketCandidates(id: RuneId): void {
+    const socket = this.runeStones.get(id)?.socketPosition;
+    if (!socket) return;
+    for (const candidate of this.ritualCrystals) {
+      if (candidate.socketedAt || this.isRitualCrystalBroken(candidate)) continue;
+      const position = candidate.object.position;
+      if (
+        isAtFallsSocketHeight(position.y, socket.y) &&
+        (position.x - socket.x) ** 2 + (position.z - socket.z) ** 2 < 1.28 ** 2
+      ) {
+        candidate.blockedSocket = id;
+      }
+    }
+  }
+
   private syncRitualSocketPlacementStates(): void {
     for (const rune of this.runeStones.values()) {
       rune.placed =
@@ -2178,6 +2313,9 @@ export class FallsRuneRitual {
       (candidate) => candidate.kickable === kickable,
     );
     if (!carry?.socketedAt) return;
+    // Pointer-down releases ownership before click/drag is resolved by the host.
+    // Do not let a buried crystal inherit that temporary vacancy.
+    this.blockOverlappingSocketCandidates(carry.socketedAt);
     carry.socketedAt = null;
     carry.object.userData.ritualSocketed = false;
     this.syncRitualSocketPlacementStates();
@@ -2301,7 +2439,8 @@ export class FallsRuneRitual {
       if (crystal.broken) return;
       const dx = crystal.group.position.x - this.host.getPlayerPosition().x;
       const dz = crystal.group.position.z - this.host.getPlayerPosition().z;
-      if (dx * dx + dz * dz > rangeSquared) return;
+      const dy = crystal.group.position.y - this.host.getPlayerFeetHeight();
+      if (dx * dx + dy * dy + dz * dz > rangeSquared) return;
       crystal.pulseAge = 0;
       this.emitCrystalSparkles(
         crystal.group.position,
@@ -2322,7 +2461,7 @@ export class FallsRuneRitual {
     for (const decoy of this.ritualDecoys.values()) twinkle(decoy);
 
     const tinkleLight = this.ritualLightSlots[0]?.light;
-    if (twinkled > 0 && tinkleLight) {
+    if (twinkled > 0 && tinkleLight && (this.chestBurst?.age ?? 3) >= 2.2) {
       this.runeTinklePeakIntensity =
         (this.host.getQuality() === "low" ? 0.75 : 1.2) *
         stageStrength *
@@ -2368,7 +2507,7 @@ export class FallsRuneRitual {
     this.runeTinklePeakIntensity =
       (this.host.getQuality() === "low" ? 0.75 : 1.2) * strength;
     this.runeTinkleAge = 0;
-    if (this.host.isReducedMotion()) return;
+    if (this.host.isReducedMotion() || (this.chestBurst?.age ?? 3) < 2.2) return;
     if (!this.runeTinkleLightLeased) {
       this.runeTinkleBaseIntensity = tinkleLight.intensity;
     }
@@ -2544,6 +2683,7 @@ export class FallsRuneRitual {
     rune.breakAge = 0;
     rune.matrixDirty = true;
     rune.carry.shatteredAtSocket = rune.carry.socketedAt;
+    if (rune.carry.socketedAt) this.blockOverlappingSocketCandidates(rune.carry.socketedAt);
     rune.carry.socketedAt = null;
     rune.carry.object.userData.ritualSocketed = false;
     rune.carry.kickable.enabled = false;
@@ -2677,6 +2817,7 @@ export class FallsRuneRitual {
     crystal.broken = true;
     crystal.breakAge = 0;
     crystal.carry.shatteredAtSocket = crystal.carry.socketedAt;
+    if (crystal.carry.socketedAt) this.blockOverlappingSocketCandidates(crystal.carry.socketedAt);
     crystal.carry.socketedAt = null;
     crystal.group.userData.ritualSocketed = false;
     crystal.carry.kickable.enabled = false;
@@ -2803,6 +2944,8 @@ export class FallsRuneRitual {
         carry.object.rotation.set(0, 0, 0);
         carry.object.userData.ritualSocketed = true;
         carry.socketedAt = restoreSocket;
+        carry.blockedSocket = null;
+        this.blockOverlappingSocketCandidates(restoreSocket);
       }
     } else {
       carry.object.userData.ritualSocketed = false;
@@ -2811,7 +2954,13 @@ export class FallsRuneRitual {
         const angle = carry.id.length * 1.37;
         carry.object.position.x += Math.cos(angle) * 1.35;
         carry.object.position.z += Math.sin(angle) * 1.35;
-        carry.object.position.y = carry.kickable.restingY;
+        // A different crystal can occupy the remembered socket during repair.
+        // Keep the displaced crystal above its local terrace, then let the
+        // shared prop solver land it; never restore it inside the old floor.
+        carry.object.position.y = Math.max(
+          carry.object.position.y,
+          getFallsTerraceHeight(carry.object.position.x, carry.object.position.z),
+        );
       }
     }
 
@@ -2850,6 +2999,7 @@ export class FallsRuneRitual {
       carry.kickable.kickCooldown = 0;
       carry.socketedAt = null;
       carry.shatteredAtSocket = null;
+      carry.blockedSocket = null;
       carry.impactCooldownUntil = 0;
       carry.restorationAge = 0;
       carry.restorationDuration = 0;
@@ -2937,7 +3087,8 @@ export class FallsRuneRitual {
     for (const socket of this.runeSockets.values()) {
       const dx = socket.position.x - this.host.getPlayerPosition().x;
       const dz = socket.position.z - this.host.getPlayerPosition().z;
-      if (dx * dx + dz * dz > rangeSquared) continue;
+      const dy = socket.position.y - this.host.getPlayerFeetHeight();
+      if (dx * dx + dy * dy + dz * dz > rangeSquared) continue;
       socket.revealUntil = Math.max(
         socket.revealUntil,
         this.host.getElapsed() + duration,
@@ -2953,8 +3104,9 @@ export class FallsRuneRitual {
       const rune = this.runeStones.get(socket.id);
       const dx = socket.position.x - this.host.getPlayerPosition().x;
       const dz = socket.position.z - this.host.getPlayerPosition().z;
+      const dy = socket.position.y - this.host.getPlayerFeetHeight();
       const lanternProximity = THREE.MathUtils.clamp(
-        1 - Math.hypot(dx, dz) / 5.4,
+        1 - Math.hypot(dx, dy, dz) / 5.4,
         0,
         1,
       );
@@ -2996,29 +3148,40 @@ export class FallsRuneRitual {
         : 0;
       if (!rootsActive) continue;
 
-      for (const [index, root] of socket.rootShards.entries()) {
-        const staggeredGrowth = THREE.MathUtils.clamp(
-          socket.growth * 1.38 - index * 0.055,
-          0,
-          1,
-        );
-        const easedGrowth = THREE.MathUtils.smoothstep(
-          staggeredGrowth,
-          0,
-          1,
-        );
-        socket.dummy.position.copy(root.position);
-        socket.dummy.position.y -= (1 - easedGrowth) * 0.2;
-        socket.dummy.rotation.copy(root.rotation);
-        socket.dummy.scale.set(
-          root.scale.x * (0.24 + easedGrowth * 0.76),
-          root.scale.y * Math.max(0.001, easedGrowth),
-          root.scale.z * (0.24 + easedGrowth * 0.76),
-        );
-        socket.dummy.updateMatrix();
-        socket.roots.setMatrixAt(index, socket.dummy.matrix);
+      // Growth keeps approaching its target asymptotically, but every root
+      // has already saturated before growth=1. Cache that effective state,
+      // not raw growth, so settled sockets stop uploading identical matrices.
+      // Shrink/reseat automatically changes this key; a new socket starts NaN.
+      const matrixGrowth = Math.min(
+        socket.growth,
+        (1 + (socket.rootShards.length - 1) * 0.055) / 1.38,
+      );
+      if (socket.rootMatrixGrowth !== matrixGrowth) {
+        for (const [index, root] of socket.rootShards.entries()) {
+          const staggeredGrowth = THREE.MathUtils.clamp(
+            socket.growth * 1.38 - index * 0.055,
+            0,
+            1,
+          );
+          const easedGrowth = THREE.MathUtils.smoothstep(
+            staggeredGrowth,
+            0,
+            1,
+          );
+          socket.dummy.position.copy(root.position);
+          socket.dummy.position.y -= (1 - easedGrowth) * 0.2;
+          socket.dummy.rotation.copy(root.rotation);
+          socket.dummy.scale.set(
+            root.scale.x * (0.24 + easedGrowth * 0.76),
+            root.scale.y * Math.max(0.001, easedGrowth),
+            root.scale.z * (0.24 + easedGrowth * 0.76),
+          );
+          socket.dummy.updateMatrix();
+          socket.roots.setMatrixAt(index, socket.dummy.matrix);
+        }
+        socket.roots.instanceMatrix.needsUpdate = true;
+        socket.rootMatrixGrowth = matrixGrowth;
       }
-      socket.roots.instanceMatrix.needsUpdate = true;
       const runePulse =
         rune && rune.pulseAge < 0.72
           ? Math.sin((rune.pulseAge / 0.72) * Math.PI)
@@ -3048,20 +3211,30 @@ export class FallsRuneRitual {
         : carry.kickable.platform;
     const insideSurface =
       surface !== null &&
-      this.host.surfaceContainsPoint(
-        surface,
-        carry.object.position.x,
-        carry.object.position.z,
-      );
+      (carry.kickable.collisionHeight !== undefined
+        ? surfaceOverlapsCircle(surface, carry.object.position.x, carry.object.position.z, carry.kickable.radius)
+        : this.host.surfaceContainsPoint(surface, carry.object.position.x, carry.object.position.z)) &&
+      carry.object.position.y >= surface.heightAt(carry.object.position.x, carry.object.position.z) - 0.025;
+    const socketHeight = carry.socketedAt
+      ? this.runeSockets.get(carry.socketedAt)?.position.y ?? 0
+      : 0;
+    // Socket/platform support is authoritative. Only unsupported crystals
+    // need the fallback scan; no cached height can survive a move or reseat.
+    const terrainHeight = carry.socketedAt || insideSurface
+      ? 0
+      : getFallsTerraceHeight(carry.object.position.x, carry.object.position.z);
+    const groundHeight = terrainHeight <= carry.object.position.y + 0.28 ? terrainHeight : 0;
     const supportHeight = carry.socketedAt
-      ? 0.17
+      ? socketHeight + 0.17
       : insideSurface && surface
         ? surface.heightAt(carry.object.position.x, carry.object.position.z) +
           0.012
-        : 0.17;
-    const restingBase = insideSurface && surface
-      ? surface.heightAt(carry.object.position.x, carry.object.position.z)
-      : carry.kickable.restingY;
+        : groundHeight + 0.17;
+    const restingBase = carry.socketedAt
+      ? socketHeight
+      : insideSurface && surface
+        ? surface.heightAt(carry.object.position.x, carry.object.position.z)
+        : Math.max(groundHeight, carry.kickable.restingY);
     const liftedHeight = Math.max(
       0,
       carry.object.position.y - restingBase,
@@ -3075,24 +3248,27 @@ export class FallsRuneRitual {
     carry.shadowRing.position.copy(carry.shadow.position);
 
     let socketProximity = 0;
-    if (!carry.socketedAt && carry.object.position.y <= 2.55) {
+    let nearestSocketHeight = 0;
+    if (!carry.socketedAt) {
       for (const rune of this.runeStones.values()) {
         const occupant = this.getRitualSocketOccupant(rune.id);
         if (occupant && occupant !== carry) continue;
+        if (!isAtFallsSocketHeight(carry.object.position.y, rune.socketPosition.y)) continue;
         const distance = Math.hypot(
           carry.object.position.x - rune.socketPosition.x,
           carry.object.position.z - rune.socketPosition.z,
         );
-        socketProximity = Math.max(
-          socketProximity,
-          1 - THREE.MathUtils.clamp(distance / 1.7, 0, 1),
-        );
+        const proximity = 1 - THREE.MathUtils.clamp(distance / 1.7, 0, 1);
+        if (proximity > socketProximity) {
+          socketProximity = proximity;
+          nearestSocketHeight = rune.socketPosition.y;
+        }
       }
     }
     if (socketProximity > 0.2 && !insideSurface) {
       const socketTop = THREE.MathUtils.lerp(
         supportHeight,
-        0.285,
+        nearestSocketHeight + 0.285,
         THREE.MathUtils.smoothstep(socketProximity, 0.2, 0.72),
       );
       carry.shadow.position.y = socketTop;
@@ -3251,6 +3427,22 @@ export class FallsRuneRitual {
     const quality = this.host.getQuality();
     const budget = getFallsPointLightBudget(quality);
     const tinkleLight = this.ritualLightSlots[0]?.light;
+    const burst = this.chestBurst;
+    const chestActive = burst !== null && burst.age < 2.2;
+    if (tinkleLight && chestActive) {
+      this.chestLightLeased = true;
+      this.runeTinkleLightLeased = false;
+      tinkleLight.position.copy(burst.lightPosition);
+      tinkleLight.color.set(this.host.colors.amber);
+      tinkleLight.distance = 8;
+      const fade = Math.max(0, 1 - burst.age / 2.2);
+      tinkleLight.intensity = fade * (7 + (this.host.isReducedMotion()
+        ? 0 : Math.max(0, Math.sin(burst.age * 18)) * 6));
+    } else if (this.chestLightLeased) {
+      this.chestLightLeased = false;
+      // Do not carry the reward's bright amber peak back onto a crystal.
+      if (tinkleLight) tinkleLight.intensity = 0;
+    }
     this.runeTinkleAge = Math.min(2, this.runeTinkleAge + delta);
     const tinkleProgress = Math.min(1, this.runeTinkleAge / 0.62);
     const tinkleActive =
@@ -3281,7 +3473,7 @@ export class FallsRuneRitual {
       index < budget.ritualAmbientSlots;
       index += 1
     ) {
-      if (index === 0 && tinkleActive) continue;
+      if (index === 0 && (tinkleActive || chestActive)) continue;
       const slot = this.ritualLightSlots[index];
       if (!slot) continue;
       this.updateRitualAmbientLight(
@@ -3300,7 +3492,7 @@ export class FallsRuneRitual {
       index < this.ritualLightSlots.length;
       index += 1
     ) {
-      if (index === 0 && tinkleActive) continue;
+      if (index === 0 && (tinkleActive || chestActive)) continue;
       const slot = this.ritualLightSlots[index];
       if (!slot) continue;
       slot.target = null;

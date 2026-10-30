@@ -9,11 +9,12 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "postbuild": "node scripts/update-performance-budget.mjs",
+    "postbuild": "npm run check:build && node scripts/update-performance-budget.mjs",
+    "check:build": "node scripts/check-build.mjs",
     "preview": "vite preview",
     "type-check": "tsc --noEmit",
     "test": "npm run test:unit",
-    "test:unit": "node --experimental-strip-types --test tests/*.test.mjs",
+    "test:unit": "node --experimental-strip-types --test --test-concurrency=2 tests/*.test.mjs",
     "check": "npm run type-check && npm run test:unit",
     "art:falls": "node --experimental-strip-types scripts/export-falls-reference.mjs",
     "update:performance-budget": "node scripts/update-performance-budget.mjs"

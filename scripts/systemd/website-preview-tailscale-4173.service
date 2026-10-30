@@ -1,0 +1,23 @@
+[Unit]
+Description=Direct Tailscale IPv4 access to website preview (4173)
+After=website-preview-4173.service
+PartOf=website-preview-4173.service
+# Tailscale may start later than the user manager. Retry only this listener;
+# missing VPN connectivity must not prevent the localhost preview from starting.
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+WorkingDirectory=%h/code/website
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/bash %h/code/website/scripts/preview-tailscale.sh
+Restart=always
+RestartSec=5s
+TimeoutStopSec=10s
+KillMode=control-group
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=website-preview-tailscale-4173
+NoNewPrivileges=true
+
+# Started by website-preview-4173.service's Wants=, not independently enabled.

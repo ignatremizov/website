@@ -2,6 +2,7 @@ import * as THREE from "three";
 
 import type { QualityTier } from "../../../world/WorldContracts";
 import { getFallsPointLightBudget } from "./FallsLightBudget";
+import { fallsLandmarks } from "./FallsLayout";
 
 interface FallsFireflyState {
   group: THREE.Group;
@@ -17,16 +18,18 @@ interface FallsFireflyState {
 }
 
 const maximumFireflyCount = 48;
+const poolOpacity = { low: 0.28, medium: 0.34, high: 0.38 } as const;
+// Each swarm belongs to a terrace instead of lighting the buried old field.
 const fireflyClusters = [
-  [-6.4, 1.35, 3.7],
-  [6.2, 1.2, 3.5],
-  [-8.2, 1.5, -3.8],
-  [8.1, 1.45, -3.6],
-  [-3.4, 2.15, -7.4],
-  [3.5, 2.05, -7.1],
-  [-2.8, 1.2, 2.4],
-  [8.2, 1.35, 6.1],
-] as const;
+  fallsLandmarks.npcs.archivist,
+  fallsLandmarks.npcs.keeper,
+  fallsLandmarks.sockets.moon,
+  fallsLandmarks.cache,
+  fallsLandmarks.sockets.ember,
+  fallsLandmarks.sockets.tide,
+  fallsLandmarks.bridge,
+  fallsLandmarks.npcs.tinkerer,
+].map(({ x, y, z }) => [x, y, z] as const);
 
 function randomSequence(seed: number): () => number {
   let state = seed >>> 0;
@@ -72,6 +75,9 @@ export class FallsFireflyField {
   private readonly radii = new Float32Array(maximumFireflyCount);
   private state: FallsFireflyState | null = null;
   private quality: QualityTier = "medium";
+  private motionTime = 0;
+  private lastElapsed: number | null = null;
+  private frameDirty = true;
 
   constructor() {
     const random = randomSequence(0xf1e5f117);
@@ -79,7 +85,7 @@ export class FallsFireflyField {
       const cluster = fireflyClusters[index % fireflyClusters.length]!;
       const offset = index * 3;
       this.origins[offset] = cluster[0] + (random() - 0.5) * 2.8;
-      this.origins[offset + 1] = cluster[1] + (random() - 0.5) * 1.15;
+      this.origins[offset + 1] = cluster[1] + 1.35 + (random() - 0.5) * 1.15;
       this.origins[offset + 2] = cluster[2] + (random() - 0.5) * 2.6;
       this.phases[index] = random() * Math.PI * 2;
       this.radii[index] = 0.22 + random() * 0.52;
@@ -94,11 +100,11 @@ export class FallsFireflyField {
     positions.set(this.origins);
     const colors = new Float32Array(maximumFireflyCount * 3);
     const palette = [
-      new THREE.Color(0xffcb66),
-      new THREE.Color(0xffaa55),
-      new THREE.Color(0xffd787),
-      new THREE.Color(0x8ff4de),
-      new THREE.Color(0xc99cff),
+      new THREE.Color(0xffe7ac),
+      new THREE.Color(0xffca77),
+      new THREE.Color(0xffefc5),
+      new THREE.Color(0xffd995),
+      new THREE.Color(0xe1c4ff),
     ] as const;
     for (let index = 0; index < maximumFireflyCount; index += 1) {
       const color = palette[index % palette.length]!;
@@ -119,8 +125,10 @@ export class FallsFireflyField {
     const points = new THREE.Points(
       geometry,
       new THREE.PointsMaterial({
-        size: 0.2,
-        sizeAttenuation: true,
+        // PointsMaterial does not attenuate size for the orthographic camera:
+        // fractional world-like sizes were actually subpixel, even up close.
+        size: 12,
+        sizeAttenuation: false,
         map: texture,
         vertexColors: true,
         transparent: true,
@@ -151,6 +159,8 @@ export class FallsFireflyField {
       toneMapped: false,
       fog: true,
       side: THREE.DoubleSide,
+      // These are planar decals; a back-face prepass contributes no volume.
+      forceSinglePass: true,
     });
     const groundPools = new THREE.InstancedMesh(
       new THREE.PlaneGeometry(1, 1),
@@ -165,17 +175,19 @@ export class FallsFireflyField {
       new THREE.Color(0xffb14f),
       new THREE.Color(0xffca66),
       new THREE.Color(0xff9f43),
-      new THREE.Color(0xd68cff),
+      new THREE.Color(0xffce89),
       new THREE.Color(0xffbd58),
       new THREE.Color(0xffa84d),
-      new THREE.Color(0x8fe8d2),
+      new THREE.Color(0xffdba0),
       new THREE.Color(0xffc265),
     ] as const;
     for (const [index, cluster] of fireflyClusters.entries()) {
-      poolDummy.position.set(cluster[0], 0.17, cluster[2]);
-      poolDummy.rotation.set(-Math.PI / 2, 0, index * 0.47);
-      const poolSize = 4 + (index % 3) * 0.56;
-      poolDummy.scale.set(poolSize, poolSize * 0.82, 1);
+      poolDummy.position.set(cluster[0], cluster[1] + 0.025, cluster[2]);
+      // Keep the narrow bridge ellipse aligned to its deck, not across the
+      // gorge; the remaining pools stay inside their authored terrace tops.
+      poolDummy.rotation.set(-Math.PI / 2, 0, index === 6 ? 0 : index * 0.47);
+      const poolSize = 3.4;
+      poolDummy.scale.set(poolSize, index === 6 ? 1.6 : poolSize * 0.82, 1);
       poolDummy.updateMatrix();
       groundPools.setMatrixAt(index, poolDummy.matrix);
       groundPools.setColorAt(index, poolPalette[index]!);
@@ -190,8 +202,8 @@ export class FallsFireflyField {
     warmLight.name = "falls-warm-firefly-swarm-light";
     warmLight.castShadow = false;
     group.add(warmLight);
-    const fantasyLight = new THREE.PointLight(0xd58cff, 0, 7.2, 2);
-    fantasyLight.name = "falls-violet-firefly-swarm-light";
+    const fantasyLight = new THREE.PointLight(0xffce91, 0, 7.2, 2);
+    fantasyLight.name = "falls-amber-firefly-nook-light";
     fantasyLight.castShadow = false;
     group.add(fantasyLight);
 
@@ -206,6 +218,7 @@ export class FallsFireflyField {
       activeCount: 0,
     };
     this.setQuality(this.quality);
+    this.update(0, true);
   }
 
   unmount(): void {
@@ -220,25 +233,33 @@ export class FallsFireflyField {
     state.texture.dispose();
     for (const light of state.lights) light.dispose();
     this.state = null;
+    this.motionTime = 0;
+    this.lastElapsed = null;
+    this.frameDirty = true;
   }
 
   setQuality(quality: QualityTier): void {
     this.quality = quality;
     const state = this.state;
     if (!state) return;
+    this.frameDirty = true;
     state.activeCount =
       quality === "low" ? 18 : quality === "medium" ? 34 : maximumFireflyCount;
     state.points.geometry.setDrawRange(0, state.activeCount);
     state.points.material.size =
-      quality === "low" ? 0.18 : quality === "medium" ? 0.27 : 0.32;
-    state.groundPools.count =
-      quality === "low" ? 4 : fireflyClusters.length;
-    state.groundPools.material.opacity =
-      quality === "low" ? 0.075 : quality === "medium" ? 0.18 : 0.22;
+      quality === "low" ? 10 : quality === "medium" ? 12 : 14;
+    // Eight tiny instances are still one draw on Low. Keep both banks and the
+    // workshop readable where that tier has no real firefly lights.
+    state.groundPools.count = fireflyClusters.length;
+    state.groundPools.material.opacity = poolOpacity[quality];
+    state.lights[0].distance = quality === "medium" ? 22 : 18;
+    state.lights[0].decay = 1.25;
+    state.lights[1].distance = 14;
+    state.lights[1].decay = 1.5;
     const { fireflyVisibleSlots } = getFallsPointLightBudget(quality);
     for (const [index, light] of state.lights.entries()) {
       // Visibility changes only with the explicit quality tier. Medium keeps
-      // one primary swarm light; the violet fill is a high-only extra.
+      // one primary swarm light; the nook fill is a high-only extra.
       light.visible = index < fireflyVisibleSlots;
     }
   }
@@ -246,58 +267,65 @@ export class FallsFireflyField {
   update(elapsed: number, reducedMotion: boolean): void {
     const state = this.state;
     if (!state) return;
-    const motionScale = reducedMotion ? 0.24 : 1;
+    const previousMotionTime = this.motionTime;
+    if (this.lastElapsed !== null && !reducedMotion) {
+      this.motionTime += Math.max(0, Math.min(elapsed - this.lastElapsed, 0.05));
+    }
+    this.lastElapsed = elapsed;
+    // Reduced motion (or a repeated timestamp) leaves every output unchanged.
+    // Still consume elapsed time so resuming does not catch up frozen frames.
+    // Mount and quality changes must populate newly visible particles/lights.
+    if (!this.frameDirty && this.motionTime === previousMotionTime) return;
+    this.frameDirty = false;
+    // Freeze in place when reduced motion changes rather than snapping every
+    // swarm and light back to its starting phase.
+    elapsed = this.motionTime;
     for (let index = 0; index < state.activeCount; index += 1) {
       const offset = index * 3;
       const phase = this.phases[index]!;
       const radius = this.radii[index]!;
       state.positions[offset] =
         this.origins[offset]! +
-        Math.sin(elapsed * (0.62 + (index % 5) * 0.07) * motionScale + phase) *
+        Math.sin(elapsed * (0.62 + (index % 5) * 0.07) + phase) *
           radius;
       state.positions[offset + 1] =
         this.origins[offset + 1]! +
-        Math.sin(elapsed * (1.05 + (index % 7) * 0.06) * motionScale + phase) *
+        Math.sin(elapsed * (1.05 + (index % 7) * 0.06) + phase) *
           radius *
           0.72;
       state.positions[offset + 2] =
         this.origins[offset + 2]! +
-        Math.cos(elapsed * (0.56 + (index % 4) * 0.08) * motionScale + phase) *
+        Math.cos(elapsed * (0.56 + (index % 4) * 0.08) + phase) *
           radius;
     }
     state.points.geometry.attributes.position!.needsUpdate = true;
 
     const qualityIntensity =
       this.quality === "high" ? 1 : this.quality === "medium" ? 0.84 : 0;
-    const poolBaseOpacity =
-      this.quality === "low" ? 0.075 : this.quality === "medium" ? 0.18 : 0.22;
     state.groundPools.material.opacity =
-      poolBaseOpacity *
-      (0.92 + Math.sin(elapsed * 1.7 * motionScale) * 0.08);
+      poolOpacity[this.quality] *
+      (0.96 + Math.sin(elapsed * 0.8) * 0.04);
     const warm = state.lights[0];
-    warm.distance = this.quality === "medium" ? 15 : 11.8;
-    warm.decay = 1.8;
+    // A restrained drift around the bridge lights both banks continuously.
+    // The old wide orbit spent much of its time lighting the river below.
+    const bridge = fallsLandmarks.bridge;
     warm.position.set(
-      -0.8 +
-        Math.sin(elapsed * 0.23 * motionScale) *
-          (this.quality === "medium" ? 3.5 : 2.4),
-      1.8 + Math.sin(elapsed * 0.71 * motionScale) * 0.28,
-      -0.9 +
-        Math.cos(elapsed * 0.19 * motionScale) *
-          (this.quality === "medium" ? 3.1 : 2.4),
+      bridge.x + Math.sin(elapsed * 0.23) * 0.65,
+      bridge.y + 2.5 + Math.sin(elapsed * 0.71) * 0.12,
+      bridge.z - 0.6 + Math.cos(elapsed * 0.19) * 0.45,
     );
     warm.intensity =
       qualityIntensity *
-      (3.05 + Math.sin(elapsed * 2.7 * motionScale) * 0.38);
+      (8.4 + Math.sin(elapsed * 1.1) * 0.25);
     const fantasy = state.lights[1];
-    fantasy.distance = 8.6;
+    const nook = fallsLandmarks.npcs.tinkerer;
     fantasy.position.set(
-      6.8 + Math.cos(elapsed * 0.2 * motionScale) * 1.5,
-      1.6 + Math.sin(elapsed * 0.63 * motionScale + 1.4) * 0.3,
-      -4.2 + Math.sin(elapsed * 0.18 * motionScale) * 1.45,
+      nook.x - 1.2 + Math.cos(elapsed * 0.2) * 0.45,
+      nook.y + 1.9 + Math.sin(elapsed * 0.63 + 1.4) * 0.12,
+      nook.z + 0.4 + Math.sin(elapsed * 0.18) * 0.4,
     );
     fantasy.intensity =
       qualityIntensity *
-      (1.35 + Math.sin(elapsed * 2.2 * motionScale + 0.8) * 0.18);
+      (5.2 + Math.sin(elapsed * 0.9 + 0.8) * 0.18);
   }
 }

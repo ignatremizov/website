@@ -2,6 +2,7 @@ import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { measureBuild } from "./check-build.mjs";
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const assetsDirectory = join(projectRoot, "dist", "assets");
@@ -42,7 +43,7 @@ const paths = {
   ),
   threeJavaScript: findAsset("Three.js", /^three-[^.]+\.js$/),
   heroWebp: findAsset("hero WebP", /^field-arch-hero-[^.]+\.webp$/),
-  heroJpeg: findAsset("hero JPEG", /^field-arch-hero-[^.]+\.jpg$/),
+  socialJpeg: join(assetsDirectory, "social", "portfolio.jpg"),
 };
 
 const [
@@ -52,7 +53,7 @@ const [
   mathJavaScript,
   threeJavaScript,
   heroWebp,
-  heroJpeg,
+  socialJpeg,
 ] = await Promise.all([
   measure(paths.shellJavaScript),
   measure(paths.shellCss),
@@ -60,25 +61,26 @@ const [
   measure(paths.mathJavaScript),
   measure(paths.threeJavaScript),
   measure(paths.heroWebp),
-  measure(paths.heroJpeg),
+  measure(paths.socialJpeg),
 ]);
 
 const kilobytes = (bytes) => (bytes / 1000).toFixed(2);
 const artifactLine = (label, measurement) =>
   `- ${label}: ${kilobytes(measurement.bytes)} kB minified / ${kilobytes(measurement.gzipBytes)} kB gzip.`;
-const firstPlayableGzip = Math.round(
-  (gameJavaScript.gzipBytes + threeJavaScript.gzipBytes) / 1000,
-);
+const buildMeasurements = await measureBuild(join(projectRoot, "dist"));
+const firstPlayableGzip = Math.round(buildMeasurements.firstPlayableJsGzipBytes / 1000);
 
 const generatedBlock = [
   startMarker,
   artifactLine("Shell JavaScript", shellJavaScript),
   artifactLine("Shell CSS", shellCss),
-  `- In-page hero: ${kilobytes(heroWebp.bytes)} kB WebP (the ${kilobytes(heroJpeg.bytes)} kB JPEG remains social metadata only).`,
+  `- In-page hero: ${kilobytes(heroWebp.bytes)} kB WebP; stable social-preview JPEG: ${kilobytes(socialJpeg.bytes)} kB (metadata only).`,
   artifactLine("Lazy game code", gameJavaScript),
   artifactLine("Nested Mightymatica code", mathJavaScript),
   artifactLine("Lazy Three.js", threeJavaScript),
   `- First-playable JavaScript after the shell: about ${firstPlayableGzip} kB gzip.`,
+  `- Conservative shell payload: ${kilobytes(buildMeasurements.shellTransferBytes)} kB (includes referenced preview/social images).`,
+  `- Later Mightymatica payload: ${kilobytes(buildMeasurements.mathTransferBytes)} kB, including all preserved room media.`,
   endMarker,
 ].join("\n");
 

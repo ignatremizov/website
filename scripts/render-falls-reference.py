@@ -11,6 +11,7 @@ from mathutils import Vector
 
 parser = argparse.ArgumentParser()
 parser.add_argument("input", type=Path)
+parser.add_argument("--layout", action="store_true")
 args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:])
 source = args.input.resolve()
 if not source.is_file():
@@ -71,18 +72,20 @@ scene.view_settings.view_transform = "Standard"
 
 # glTF Y-up arrives as Blender Z-up. Look north across the falls from the
 # south-east, close to the game's three-quarter view. Guides remain meter-scale.
-target = Vector((-1.1, 7.8, 2.25))
+target = Vector((0, 0, -0.3) if args.layout else (-1.1, 7.8, 2.25))
 camera_data = bpy.data.cameras.new("Geology review camera")
 camera = bpy.data.objects.new("Geology review camera", camera_data)
 scene.collection.objects.link(camera)
-camera.location = (15.0, -12.0, 16.5)
+camera.location = (24.0, -28.0, 29.0) if args.layout else (15.0, -12.0, 16.5)
 camera.rotation_euler = (target - camera.location).to_track_quat("-Z", "Y").to_euler()
 camera_data.type = "ORTHO"
-camera_data.ortho_scale = 19
+camera_data.ortho_scale = 45 if args.layout else 19
 scene.camera = camera
 
 # The plinth only belongs to the inspection file, not the exported kit/game.
-bpy.ops.mesh.primitive_plane_add(size=200, location=(0, 0, -0.04))
+# The full island has a river curtain below its rim. Keep the inspection
+# floor underneath it; a floor at world zero hid the entire outward spill.
+bpy.ops.mesh.primitive_plane_add(size=200, location=(0, 0, -12 if args.layout else -0.04))
 plinth = bpy.context.object
 plinth.name = "PREVIEW ONLY - neutral ground"
 ground = bpy.data.materials.new("Preview ground")

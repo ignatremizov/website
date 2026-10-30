@@ -4626,6 +4626,47 @@ svg {
   font-weight: 400;
 }
 
+/* Baseline content is useful before JS succeeds, not only without Three.js. */
+html:not([data-shell-ready="true"]),
+body:not([data-shell-ready="true"]) {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.portfolio-document.portfolio-dialog {
+  position: relative;
+  inset: auto;
+  display: block;
+  width: min(1500px, calc(100% - 32px));
+  max-height: none;
+  margin: 32px auto;
+  overflow: visible;
+  contain: none;
+  scroll-margin-top: 16px;
+}
+
+.portfolio-document .portfolio-close-button,
+body:not([data-shell-ready="true"]) dialog,
+body:not([data-shell-ready="true"]) .entry-gate,
+body:not([data-shell-ready="true"]) [data-action]:not([data-action="portfolio"]) {
+  display: none;
+}
+
+.load-recovery-dialog {
+  width: min(640px, calc(100% - 32px));
+}
+
+.load-recovery-dialog h2 {
+  padding-right: 36px;
+}
+
+.load-recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 24px;
+}
+
 @media (max-width: 1200px) {
   .entry-panel {
     width: min(520px, 43vw);

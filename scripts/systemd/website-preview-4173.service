@@ -1,0 +1,23 @@
+[Unit]
+Description=Systems Under Strange Skies local production preview (4173)
+Wants=website-preview-tailscale-4173.service
+# Retry after temporarily missing runtime/build files or a port conflict instead
+# of permanently rate-limiting the unit during login.
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+WorkingDirectory=%h/code/website
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/bash %h/code/website/scripts/preview-service.sh
+Restart=always
+RestartSec=5s
+TimeoutStopSec=10s
+KillMode=control-group
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=website-preview-4173
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

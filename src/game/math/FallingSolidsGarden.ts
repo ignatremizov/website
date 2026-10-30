@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { GlitchFragments, writeGlitchDissolveTransform } from "../GlitchFragments.ts";
 import type {
   MathQualityTier,
   MathTravelingBody,
@@ -29,17 +30,6 @@ interface FallingSolid {
   relocationTargetRotation: THREE.Euler;
 }
 
-interface GlitchFragment {
-  active: boolean;
-  age: number;
-  lifetime: number;
-  phase: number;
-  position: THREE.Vector3;
-  velocity: THREE.Vector3;
-  rotation: THREE.Euler;
-  scale: THREE.Vector3;
-}
-
 const bucketColors = [
   0x55dce8,
   0xff7183,
@@ -65,19 +55,12 @@ export class FallingSolidsGarden {
   private readonly outlineMeshes: THREE.InstancedMesh[] = [];
   private readonly pickMeshes: THREE.InstancedMesh[] = [];
   private readonly solids: FallingSolid[] = [];
-  private readonly glitchMesh: THREE.InstancedMesh<
-    THREE.BoxGeometry,
-    THREE.MeshBasicMaterial
-  >;
-  private readonly glitchFragments: GlitchFragment[] = [];
+  private readonly glitchFragments: GlitchFragments;
   private readonly dummy = new THREE.Object3D();
   private readonly dragLocalPoint = new THREE.Vector3();
   private readonly orbLocalPoint = new THREE.Vector3();
   private readonly orbPreviousLocalPoint = new THREE.Vector3();
-  private readonly glitchColor = new THREE.Color();
   private activePerType = 5;
-  private activeGlitchFragments = 0;
-  private glitchCursor = 0;
   private wave = 0;
   private orbSweepReady = false;
 
@@ -103,46 +86,11 @@ export class FallingSolidsGarden {
     gardenFloor.receiveShadow = true;
     this.group.add(gardenFloor);
 
-    this.glitchMesh = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.88,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        toneMapped: false,
-      }),
+    this.glitchFragments = new GlitchFragments(
+      this.group,
       maximumGlitchFragments,
+      "falling-solids-glitch-fragments",
     );
-    this.glitchMesh.name = "falling-solids-glitch-fragments";
-    this.glitchMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.glitchMesh.frustumCulled = false;
-    this.glitchMesh.renderOrder = 5;
-    this.glitchMesh.visible = false;
-    for (let index = 0; index < maximumGlitchFragments; index += 1) {
-      this.glitchFragments.push({
-        active: false,
-        age: 0,
-        lifetime: 0,
-        phase: index * 0.61,
-        position: new THREE.Vector3(),
-        velocity: new THREE.Vector3(),
-        rotation: new THREE.Euler(),
-        scale: new THREE.Vector3(),
-      });
-      this.dummy.position.set(0, -100, 0);
-      this.dummy.rotation.set(0, 0, 0);
-      this.dummy.scale.setScalar(0);
-      this.dummy.updateMatrix();
-      this.glitchMesh.setMatrixAt(index, this.dummy.matrix);
-      this.glitchMesh.setColorAt(index, new THREE.Color(0x55dce8));
-    }
-    this.glitchMesh.instanceMatrix.needsUpdate = true;
-    if (this.glitchMesh.instanceColor) {
-      this.glitchMesh.instanceColor.needsUpdate = true;
-    }
-    this.group.add(this.glitchMesh);
 
     const geometries: THREE.BufferGeometry[] = [
       new THREE.TetrahedronGeometry(0.42, 0),
@@ -439,7 +387,7 @@ export class FallingSolidsGarden {
       this.orbPreviousLocalPoint.copy(this.orbLocalPoint);
     }
     this.updateMatrices();
-    this.updateGlitchFragments(delta, elapsed);
+    this.glitchFragments.update(delta, elapsed);
   }
 
   setQuality(quality: MathQualityTier): void {
@@ -459,7 +407,7 @@ export class FallingSolidsGarden {
 
   hasActiveMotion(): boolean {
     return (
-      this.activeGlitchFragments > 0 ||
+      this.glitchFragments.hasActiveMotion() ||
       this.solids.some(
         (solid) =>
           solid.slot < this.activePerType &&
@@ -474,7 +422,7 @@ export class FallingSolidsGarden {
 
   triggerWave(announce: boolean): void {
     this.wave += 1;
-    this.clearGlitchFragments();
+    this.glitchFragments.clear();
     for (const solid of this.solids) {
       if (solid.slot >= this.activePerType) {
         this.resetSolid(solid, false);
@@ -500,7 +448,7 @@ export class FallingSolidsGarden {
 
   triggerGlitchWave(): void {
     this.wave += 1;
-    this.clearGlitchFragments();
+    this.glitchFragments.clear();
     for (const solid of this.solids) {
       if (solid.slot >= this.activePerType) {
         this.resetSolid(solid, false);
@@ -737,136 +685,16 @@ export class FallingSolidsGarden {
     solid.relocationDuration = 0;
     solid.dissolveAge = 0;
     solid.dissolveDuration = this.context.reducedMotion ? 0.2 : 0.58;
-    this.emitGlitchFragments(solid);
-  }
-
-  private emitGlitchFragments(solid: FallingSolid): void {
-    const requestedCount =
-      this.activePerType <= 3 ? 7 : this.activePerType <= 5 ? 11 : 16;
-    for (let emitted = 0; emitted < requestedCount; emitted += 1) {
-      const index = this.glitchCursor;
-      this.glitchCursor =
-        (this.glitchCursor + 1) % maximumGlitchFragments;
-      const fragment = this.glitchFragments[index];
-      if (!fragment) continue;
-      if (!fragment.active) this.activeGlitchFragments += 1;
-      const phase =
-        solid.phase +
-        emitted * 2.39996 +
-        this.wave * 0.71 +
-        solid.type * 0.43;
-      const stripe = emitted % 3 !== 0;
-      fragment.active = true;
-      fragment.age = 0;
-      fragment.lifetime =
-        (this.context.reducedMotion ? 0.2 : 0.34) +
-        (emitted % 5) * 0.055;
-      fragment.phase = phase;
-      fragment.position.set(
-        solid.position.x +
-          Math.sin(phase * 1.7) * solid.scale * 0.36,
-        solid.position.y +
-          ((emitted % 6) - 2.5) * solid.scale * 0.13,
-        solid.position.z +
-          Math.cos(phase * 1.3) * solid.scale * 0.24,
-      );
-      fragment.velocity.set(
-        solid.releaseVelocity.x * 0.14 +
-          Math.cos(phase) * (0.32 + (emitted % 4) * 0.09),
-        0.12 + (emitted % 5) * 0.1,
-        solid.releaseVelocity.z * 0.14 +
-          Math.sin(phase) * (0.24 + (emitted % 3) * 0.08),
-      );
-      fragment.rotation.set(
-        stripe ? 0 : phase * 0.17,
-        solid.rotation.y + phase * 0.11,
-        stripe ? 0 : phase * 0.09,
-      );
-      fragment.scale.set(
-        solid.scale *
-          (stripe ? 0.24 + (emitted % 4) * 0.13 : 0.1),
-        solid.scale *
-          (stripe ? 0.035 + (emitted % 3) * 0.018 : 0.1),
-        solid.scale *
-          (stripe ? 0.045 + (emitted % 2) * 0.025 : 0.1),
-      );
-      const color =
-        emitted % 4 === 0
-          ? 0x55dce8
-          : emitted % 4 === 1
-            ? 0xff4fc8
-            : emitted % 4 === 2
-              ? (bucketColors[solid.type] ?? 0xffffff)
-              : 0xffffff;
-      this.glitchMesh.setColorAt(index, this.glitchColor.setHex(color));
-    }
-    if (this.glitchMesh.instanceColor) {
-      this.glitchMesh.instanceColor.needsUpdate = true;
-    }
-    this.glitchMesh.visible = this.activeGlitchFragments > 0;
-  }
-
-  private updateGlitchFragments(delta: number, elapsed: number): void {
-    if (this.activeGlitchFragments <= 0) {
-      this.glitchMesh.visible = false;
-      return;
-    }
-    for (const [index, fragment] of this.glitchFragments.entries()) {
-      if (!fragment.active) continue;
-      fragment.age += delta;
-      if (fragment.age >= fragment.lifetime) {
-        fragment.active = false;
-        this.activeGlitchFragments = Math.max(
-          0,
-          this.activeGlitchFragments - 1,
-        );
-        this.dummy.position.set(0, -100, 0);
-        this.dummy.rotation.set(0, 0, 0);
-        this.dummy.scale.setScalar(0);
-        this.dummy.updateMatrix();
-        this.glitchMesh.setMatrixAt(index, this.dummy.matrix);
-        continue;
-      }
-      const progress = fragment.age / fragment.lifetime;
-      const remaining =
-        1 - THREE.MathUtils.smoothstep(progress, 0.34, 1);
-      const flicker =
-        Math.sin(fragment.age * 66 + fragment.phase * 3.1) > -0.42
-          ? 1
-          : 0.16;
-      fragment.position.addScaledVector(fragment.velocity, delta);
-      fragment.velocity.multiplyScalar(Math.exp(-delta * 2.6));
-      fragment.rotation.y += delta * 2.8;
-      this.dummy.position.copy(fragment.position);
-      this.dummy.position.x +=
-        Math.sin(elapsed * 31 + fragment.phase) * 0.045 * remaining;
-      this.dummy.rotation.copy(fragment.rotation);
-      this.dummy.scale.copy(fragment.scale);
-      this.dummy.scale.x *=
-        remaining *
-        flicker *
-        (1 + Math.sin(fragment.age * 43 + fragment.phase) * 0.28);
-      this.dummy.scale.y *= remaining * flicker;
-      this.dummy.scale.z *= remaining * flicker;
-      this.dummy.updateMatrix();
-      this.glitchMesh.setMatrixAt(index, this.dummy.matrix);
-    }
-    this.glitchMesh.instanceMatrix.needsUpdate = true;
-    this.glitchMesh.visible = this.activeGlitchFragments > 0;
-  }
-
-  private clearGlitchFragments(): void {
-    for (const [index, fragment] of this.glitchFragments.entries()) {
-      fragment.active = false;
-      this.dummy.position.set(0, -100, 0);
-      this.dummy.rotation.set(0, 0, 0);
-      this.dummy.scale.setScalar(0);
-      this.dummy.updateMatrix();
-      this.glitchMesh.setMatrixAt(index, this.dummy.matrix);
-    }
-    this.activeGlitchFragments = 0;
-    this.glitchMesh.visible = false;
-    this.glitchMesh.instanceMatrix.needsUpdate = true;
+    this.glitchFragments.emit({
+      position: solid.position,
+      velocity: solid.releaseVelocity,
+      scale: solid.scale,
+      yaw: solid.rotation.y,
+      phase: solid.phase + this.wave * 0.71 + solid.type * 0.43,
+      color: bucketColors[solid.type] ?? 0xffffff,
+      count: this.activePerType <= 3 ? 7 : this.activePerType <= 5 ? 11 : 16,
+      reducedMotion: this.context.reducedMotion,
+    });
   }
 
   private getSolid(type: number, slot: number): FallingSolid | undefined {
@@ -882,24 +710,12 @@ export class FallingSolidsGarden {
       this.dummy.rotation.copy(solid.rotation);
       if (solid.dissolveAge >= 0 && solid.dissolveDuration > 0) {
         const progress = solid.dissolveAge / solid.dissolveDuration;
-        const remaining =
-          1 - THREE.MathUtils.smoothstep(progress, 0.08, 1);
-        const flicker =
-          Math.sin(progress * 74 + solid.phase * 4.1) > -0.48
-            ? 1
-            : 0.08;
-        this.dummy.position.x +=
-          Math.sin(progress * 39 + solid.phase) * 0.11 * remaining;
-        this.dummy.scale.set(
-          solid.scale *
-            remaining *
-            flicker *
-            (1 + Math.sin(progress * 51) * 0.22),
-          solid.scale * remaining * flicker,
-          solid.scale *
-            remaining *
-            flicker *
-            (1 - Math.sin(progress * 37) * 0.12),
+        writeGlitchDissolveTransform(
+          this.dummy,
+          solid.position,
+          solid.scale,
+          progress,
+          solid.phase,
         );
       } else {
         const rematerialize = THREE.MathUtils.smoothstep(

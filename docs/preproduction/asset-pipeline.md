@@ -73,6 +73,31 @@ art. Interactive verification remains manual: climb the outer ledges and crown,
 check the cave from behind, and open the waterfall before reviewing the chest
 entrance. Check both Low and Medium/High for silhouette and material readability.
 
+### Multi-level layout reference
+
+The geometry-first rebuild also has a separate, regenerable
+`art/blender/falls-layout-medium.glb` / `.blend` / `.png`:
+
+```sh
+npm run art:falls -- medium --layout
+blender --background --threads 2 \
+  --python scripts/render-falls-reference.py -- \
+  art/blender/falls-layout-medium.glb --layout
+```
+
+This calls the actual `FallsTerrain` builder for the terraces, stairs, bridge,
+mineral dressing, rear pillars, wet basin, and NPC furniture. Socket, crystal-cache,
+monument, and NPC markers use
+`FallsLayout` coordinates; they are scale guides, not exported gameplay props.
+The cave shells use the shared cliff builders as inspection assemblies. Runtime
+foliage, water shaders, light pools, physics, and puzzle animation remain absent.
+Named solids carry their runtime bounds as inspection metadata.
+
+The previous geology study remains available for comparison. The layout GLB is
+an unoptimized modeling reference, not a download-budget target. Do not replace
+the runtime zone with it: validate the routes first, then refine and optimize
+selected authored meshes and baked materials.
+
 ## Meshy
 
 Use generated images for isolated props and the clean player base. Prefer a single

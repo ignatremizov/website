@@ -20,4 +20,6 @@ export interface Kickable {
   friction: number;
   kickCooldown: number;
   message: string;
+  /** Shared feet-origin envelope for drag, release, and physics; visual pose/glow never changes its floor. */
+  collisionHeight?: number;
 }

@@ -3,7 +3,7 @@ import type { QualityTier } from "../../../world/WorldContracts";
 export interface FallsPointLightBudget {
   /**
    * Ritual lights that remain visible for the whole quality tier. The first
-   * slot is also the transient rune-tinkle light, so low retains one visible
+   * slot is also the transient rune-tinkle/chest light, so low retains one visible
    * slot even though it has no persistent crystal lighting.
    */
   readonly ritualVisibleSlots: number;
@@ -33,8 +33,8 @@ const fallsPointLightBudgets = {
 
 /**
  * The steady Falls point-light shader budget depends only on quality changes,
- * never on crystal seating, shattering, restoration, or tinkle activity.
- * The separately bounded chest-reward flash is intentionally excluded.
+ * never on crystal seating, shattering, restoration, tinkle, or chest activity.
+ * The chest reward temporarily borrows slot zero; it never adds another light.
  */
 export function getFallsPointLightBudget(
   quality: QualityTier,

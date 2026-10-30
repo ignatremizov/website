@@ -1,4 +1,3 @@
-import "./styles.css";
 import { TerminalRequests } from "./shell/TerminalRequests";
 
 import type {
@@ -134,8 +133,16 @@ const progressResetQuietButton =
 const progressResetStatus = byId<HTMLElement>("progress-reset-status");
 const progressResetModule = byId<HTMLElement>("record-reset-module");
 const progressResetHeading = byId<HTMLElement>("record-reset-heading");
-const portfolioDialog = byId<HTMLDialogElement>("portfolio");
+// Keep the original semantic article visible until the entire shell is ready.
+// The detached dialog receives the same nodes only at the final startup step.
+const portfolioDocument = byId<HTMLElement>("portfolio");
+const portfolioDialog = document.createElement("dialog");
+portfolioDialog.id = "portfolio";
+portfolioDialog.className = "panel-dialog portfolio-dialog";
+portfolioDialog.setAttribute("aria-labelledby", "portfolio-heading");
+let portfolioEnhanced = false;
 const helpDialog = byId<HTMLDialogElement>("help-dialog");
+const buildRecoveryDialog = byId<HTMLDialogElement>("build-recovery");
 const mathMapDestination =
   document.querySelector<HTMLButtonElement>('[data-discovery-zone="math"]');
 const resumeAfterExpeditionReset = consumeExpeditionReboot();
@@ -149,6 +156,7 @@ const dialogs = {
   portfolio: portfolioDialog,
   fieldMenu: fieldMenuDialog,
   help: helpDialog,
+  recovery: buildRecoveryDialog,
 };
 
 const PORTFOLIO_HASH = "#portfolio";
@@ -169,7 +177,7 @@ type IdleCallbackWindow = Window & {
 
 const idleCallbackWindow = window as IdleCallbackWindow;
 const portfolioPortrait =
-  portfolioDialog.querySelector<HTMLImageElement>(".portfolio-intro img");
+  portfolioDocument.querySelector<HTMLImageElement>(".portfolio-intro img");
 
 type FolioTab = "journal" | "atlas" | "spells" | "settings";
 
@@ -1269,7 +1277,7 @@ function cancelPortfolioPreparation(): void {
 function preparePortfolioPresentation(): void {
   portfolioPreparationIdleHandle = null;
   portfolioPreparationTimer = 0;
-  if (portfolioPrepared || portfolioDialog.open) return;
+  if (!portfolioEnhanced || portfolioPrepared || portfolioDialog.open) return;
 
   portfolioDialog.dataset.revealSource = pendingPortfolioRevealSource;
   portfolioDialog.dataset.prepared = "true";
@@ -1294,6 +1302,7 @@ function schedulePortfolioPreparation(
   source: PortfolioRevealSource = "standard",
   priority: "idle" | "cinematic" = "idle",
 ): void {
+  if (!portfolioEnhanced) return;
   if (source === "monument") {
     pendingPortfolioRevealSource = source;
   }
@@ -1331,6 +1340,13 @@ function openDialog(
   name: keyof typeof dialogs,
   revealSource: PortfolioRevealSource = "standard",
 ): void {
+  if (!portfolioEnhanced) {
+    if (name === "portfolio") {
+      window.location.hash = PORTFOLIO_HASH;
+      portfolioDocument.scrollIntoView();
+    }
+    return;
+  }
   if (worldCollapseInProgress) return;
   closeTerminal();
   for (const [dialogName, dialog] of Object.entries(dialogs)) {
@@ -1362,6 +1378,11 @@ function openPortfolio(
   revealSource: PortfolioRevealSource = "standard",
   updateRoute = true,
 ): void {
+  if (!portfolioEnhanced) {
+    window.location.hash = PORTFOLIO_HASH;
+    portfolioDocument.scrollIntoView();
+    return;
+  }
   if (worldCollapseInProgress) return;
   if (updateRoute && window.location.hash !== PORTFOLIO_HASH) {
     const currentState =
@@ -1695,7 +1716,7 @@ async function ensureGame(destination: ZoneId | null = null): Promise<PortfolioG
     }
     instance = readyInstance;
   } catch (error) {
-    const detail = error instanceof Error ? error.message : "Unknown renderer error";
+    console.error("Interactive world startup failed", error);
     stage.dataset.state = "idle";
     window.scrollTo(0, 0);
     entryLanding.hidden = false;
@@ -1706,7 +1727,17 @@ async function ensureGame(destination: ZoneId | null = null): Promise<PortfolioG
     // Shared startup recovery is app-owned, not output from whichever terminal
     // command happened to await this load (and may already be stale).
     entryStatus.textContent =
-      `Interactive mode could not start here. The complete portfolio is still available. Renderer error: ${detail}`;
+      "The interactive world could not start. Try entering again, or open the complete portfolio. If this continues, check your connection or refresh the page.";
+    // The disabled, hidden gate loses focus during loading. Return keyboard
+    // users to it without taking focus from a dialog or a newer shell action.
+    if (
+      !hasOpenOverlay() &&
+      (document.activeElement === document.body ||
+        document.activeElement === canvas ||
+        document.activeElement === exploreButton)
+    ) {
+      exploreButton.focus({ preventScroll: true });
+    }
     throw error;
   } finally {
     if (!game) gamePromise = null;
@@ -1780,7 +1811,9 @@ async function runTerminalCommand(
     writeTerminal(
       "sandbox     speed <1-3> · noclip · spark · lantern [on|off] · respawn · quality <low|medium|high>",
     );
-    writeTerminal("debug       colliders [on|off] · hitboxes [on|off]");
+    writeTerminal("debug       colliders [on|off] · paths [on|off] · top [on|off]");
+    writeTerminal("trace       debug trace [on|off|clear|export] · bounded navigation diagnostics");
+    writeTerminal("performance debug perf [10–300|on|off|mark|clear|export] · timed frame-drop capture");
     writeTerminal("spellbook   spell [spark|surge|thunder] · forms must be recovered first");
     writeTerminal("override    override spell <spark|surge|thunder> · surge · thunder");
     writeTerminal("records     reset progress confirm", "muted");
@@ -2335,6 +2368,135 @@ async function runTerminalCommand(
 
   const debugSubject =
     normalized === "debug" ? (args[0] ?? "").toLowerCase() : normalized;
+  if (normalized === "debug" && debugSubject === "perf") {
+    const action = (args[1] ?? "").toLowerCase();
+    const seconds = action === "on" ? 120 : /^\d+$/.test(action) ? Number(action) : null;
+    if (args.length > 2 || (seconds !== null
+      ? !Number.isInteger(seconds) || seconds < 10 || seconds > 300
+      : !["", "off", "mark", "clear", "export"].includes(action))) {
+      writeTerminal("usage: debug perf [10–300|on|off|mark|clear|export]", "error");
+      return;
+    }
+    const instance = await ensureGame();
+    if (!isCurrent()) return;
+    if (seconds !== null) {
+      instance.startPerformanceCapture(seconds);
+      writeTerminal(`Performance capture started for ${seconds}s. Play normally; it stops automatically.`, "ok");
+      writeTerminal("Session-only, no uploads. Afterwards: debug perf export", "muted");
+      scheduleTerminalClose(360);
+    } else if (action === "off") {
+      instance.stopPerformanceCapture();
+      writeTerminal("Performance capture stopped; retained data is ready to export.", "ok");
+    } else if (action === "clear") {
+      instance.clearPerformanceCapture();
+      writeTerminal("Performance capture stopped and cleared.", "ok");
+    } else if (action === "mark") {
+      if (!instance.getPerformanceCaptureStatus()?.recording) {
+        writeTerminal("No active capture. Start with debug perf 120.", "error");
+      } else {
+        instance.markPerformanceCapture();
+        writeTerminal("Marked this moment in the capture.", "ok");
+        scheduleTerminalClose(360);
+      }
+    } else if (action === "export") {
+      const data = instance.exportPerformanceCapture();
+      if (data === null) {
+        writeTerminal("No performance capture yet. Start with debug perf 120.", "error");
+        return;
+      }
+      const url = URL.createObjectURL(new Blob([data], { type: "application/json" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "performance-trace.json";
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      writeTerminal("Performance trace exported. Includes browser, viewport, and game timing, not saved progress.", "ok");
+    } else {
+      const status = instance.getPerformanceCaptureStatus();
+      writeTerminal(status ? `Performance capture: ${status.reason} · ${status.frames} frames · ` +
+        `${status.hitches} candidate hitches · worst gap ${status.worstGapMs}ms` : "No performance capture yet.");
+      if (status?.recording) writeTerminal(`${status.secondsRemaining}s remaining.`, "muted");
+      writeTerminal("debug perf 120 · play normally · debug perf export", "muted");
+      writeTerminal("CPU phase timing is not GPU timing; intentional idle pacing is accounted for.", "muted");
+    }
+    return;
+  }
+  if (normalized === "debug" && debugSubject === "trace") {
+    const action = (args[1] ?? "").toLowerCase();
+    if (args.length > 2 || !["", "on", "off", "clear", "export"].includes(action)) {
+      writeTerminal("usage: debug trace [on|off|clear|export]", "error");
+      return;
+    }
+    const instance = await ensureGame();
+    if (!isCurrent()) return;
+    if (action === "on" || action === "off") {
+      instance.setNavigationTraceEnabled(action === "on");
+      writeTerminal(`navigation trace: ${action} · session-only · at most 128 events`, "ok");
+    } else if (action === "clear") {
+      instance.clearNavigationTrace();
+      writeTerminal("Navigation trace cleared.", "ok");
+    } else if (action === "export") {
+      const url = URL.createObjectURL(new Blob([instance.exportNavigationTrace()], { type: "application/json" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "navigation-trace.json";
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      writeTerminal("Navigation trace exported. No saved game data is included.", "ok");
+    } else {
+      const trace = JSON.parse(instance.exportNavigationTrace()) as { enabled: boolean; events: unknown[] };
+      writeTerminal(`navigation trace: ${trace.enabled ? "on" : "off"} · ${trace.events.length}/128 events`);
+      writeTerminal("debug trace on · reproduce the route · debug trace export", "muted");
+    }
+    return;
+  }
+  if (normalized === "debug" && debugSubject === "top") {
+    const requested = (args[1] ?? "").toLowerCase();
+    if (
+      args.length > 2 ||
+      (requested !== "" && requested !== "on" && requested !== "off")
+    ) {
+      writeTerminal("usage: debug top [on|off]", "error");
+      return;
+    }
+    const instance = await ensureGame();
+    if (!isCurrent()) return;
+    const enabled = instance.toggleTopDownDebug(
+      requested === "on" ? true : requested === "off" ? false : undefined,
+    );
+    writeTerminal(enabled
+      ? "top view: on · north is up · combine with debug paths or debug colliders"
+      : "top view: off", "ok");
+    scheduleTerminalClose(360);
+    return;
+  }
+  if (normalized === "debug" && debugSubject === "paths") {
+    const requested = (args[1] ?? "").toLowerCase();
+    if (
+      args.length > 2 ||
+      (requested !== "" && requested !== "on" && requested !== "off")
+    ) {
+      writeTerminal("usage: debug paths [on|off]", "error");
+      return;
+    }
+    const force =
+      requested === "on" ? true : requested === "off" ? false : undefined;
+    const instance = await ensureGame();
+    if (!isCurrent()) return;
+    const enabled = instance.toggleNavigationDebug(force);
+    writeTerminal(
+      enabled
+        ? "navigation debug: on · cyan = remaining walk/target · amber = jump/landing · green = planned frog hop · red = known unreachable target"
+        : "navigation debug: off",
+      "ok",
+    );
+    scheduleTerminalClose(360);
+    return;
+  }
   if (
     debugSubject === "colliders" ||
     debugSubject === "collision" ||
@@ -2367,7 +2529,7 @@ async function runTerminalCommand(
     return;
   }
   if (normalized === "debug") {
-    writeTerminal("usage: debug <colliders|hitboxes> [on|off]", "error");
+    writeTerminal("usage: debug <colliders|hitboxes|paths|top> [on|off] · debug trace [on|off|clear|export] · debug perf [10–300|on|off|mark|clear|export]", "error");
     return;
   }
 
@@ -2575,6 +2737,8 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-close]"
 
 for (const dialog of Object.values(dialogs)) {
   dialog.addEventListener("close", () => {
+    // Native close events are queued; an old close must not undo a new open.
+    if (dialog.open) return;
     if (dialog === portfolioDialog) {
       portfolioPrepared = true;
       portfolioDialog.dataset.prepared = "true";
@@ -3080,14 +3244,20 @@ document.addEventListener("visibilitychange", () => {
   finishSpellPointer(false);
 });
 
+// Retain Vite's rejection: import callers must still run their cleanup paths.
+// Never automatically reload or clear progression after a load failure.
+window.addEventListener("vite:preloadError", () => {
+  entryStatus.textContent = "A world file could not load. Check your connection or refresh this page. The complete portfolio remains available.";
+  if (portfolioEnhanced && !buildRecoveryDialog.open) openDialog("recovery");
+});
+byId<HTMLButtonElement>("build-recovery-refresh").addEventListener("click", () => window.location.reload());
+
 renderAchievementLedger();
 syncQualityControls(readStoredQuality() ?? chooseAutomaticQuality());
 syncSpellControls();
 syncProgressResetControl();
 applyWorldPreferences();
 syncVisualViewport();
-syncPortfolioRoute();
-schedulePortfolioPreparation();
 window.addEventListener("hashchange", syncPortfolioRoute);
 window.addEventListener("popstate", syncPortfolioRoute);
 window.visualViewport?.addEventListener("resize", syncVisualViewport, { passive: true });
@@ -3096,7 +3266,35 @@ window.addEventListener("resize", syncVisualViewport, { passive: true });
 
 window.addEventListener("beforeunload", () => game?.dispose(), { once: true });
 
-if (resumeAfterExpeditionReset) {
+// Progressive enhancement is the final startup step. Until this succeeds,
+// #portfolio is the complete, styled, scrollable document, including without JS.
+try {
+  if (typeof portfolioDialog.showModal === "function") {
+    portfolioDialog.append(...portfolioDocument.childNodes);
+    portfolioDocument.replaceWith(portfolioDialog);
+    portfolioEnhanced = true;
+    document.body.dataset.shellReady = "true";
+    document.documentElement.dataset.shellReady = "true";
+    for (const link of document.querySelectorAll<HTMLElement>('[data-action="portfolio"]')) {
+      link.setAttribute("aria-haspopup", "dialog");
+      link.setAttribute("aria-controls", "portfolio");
+    }
+    entryStatus.textContent = "The interactive Three.js world loads here. No install or page change.";
+    syncPortfolioRoute();
+    schedulePortfolioPreparation();
+  }
+} catch (error) {
+  cancelPortfolioPreparation();
+  if (portfolioDialog.open) portfolioDialog.close();
+  portfolioDocument.append(...portfolioDialog.childNodes);
+  if (portfolioDialog.isConnected) portfolioDialog.replaceWith(portfolioDocument);
+  portfolioEnhanced = false;
+  delete document.body.dataset.shellReady;
+  delete document.documentElement.dataset.shellReady;
+  console.error("Portfolio enhancement failed; keeping the complete HTML document", error);
+}
+
+if (resumeAfterExpeditionReset && portfolioEnhanced) {
   void ensureGame().catch(() => {
     // ensureGame restores the normal accessible fallback on failure.
   });

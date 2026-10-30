@@ -415,7 +415,7 @@ export function addWaterfallOutcroppings(
     scaleZ: number,
     material: RockMaterial,
   ];
-  const spillLipY = hasCave ? height - 0.27 : height + 0.03;
+  const spillLipY = height + (hasCave ? 0.78 : 0.81);
   const layouts: RockLayout[] = [
     // Broad faceted shoulders break up the larger cliff envelope without
     // extending beyond its authored collision footprint.

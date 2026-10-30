@@ -20,3 +20,6 @@ turtle-undertale-youtube,audio,https://www.youtube.com/watch?v=KtC-pl9P3kE,offic
 falls-geology-reference,model,project FallsScenery mesh builders,project source,N/A,art/blender/falls-geology-medium.glb,reference,Texture-free medium geology study; not deployed or a complete exported level
 falls-geology-blender,model,project geology exporter and Blender,project source,N/A,art/blender/falls-geology-medium.blend,reference,Editable inspection scene; copy before hand editing because regeneration overwrites it
 falls-geology-preview,image,project geology exporter and Blender Workbench,project source,N/A,art/blender/falls-geology-medium.png,reference,Bounded offline geometry preview; not an in-game screenshot
+falls-layout-reference,model,project FallsTerrain builder and FallsLayout landmarks,project source,N/A,art/blender/falls-layout-medium.glb,reference,Unoptimized terrain and nook reference with scale guides; no gameplay or runtime shaders
+falls-layout-blender,model,project layout exporter and Blender,project source,N/A,art/blender/falls-layout-medium.blend,reference,Editable layout inspection scene; copy before hand editing
+falls-layout-preview,image,project layout exporter and Blender Workbench,project source,N/A,art/blender/falls-layout-medium.png,reference,Bounded geometry preview of the multi-level layout; not an in-game screenshot

@@ -265,14 +265,12 @@ export class VoidTurtleRide {
 
   triggerShellBounce(): TurtleShellBounce | null {
     const turtle = this.turtle;
-    if (!turtle || turtle.riding) return null;
+    if (!turtle || turtle.riding || turtle.awake) return null;
     turtle.buckAge = 0;
     return {
       x: turtle.surface.x,
       z: turtle.surface.z,
-      message: turtle.awake
-        ? "The wakeful turtle snaps its shell upward. You arc back toward the station."
-        : "The sleeping turtle flinches beneath your boots. Its shell throws you back toward the station.",
+      message: "The sleeping turtle flinches beneath your boots. Its shell throws you back toward the station.",
     };
   }
 

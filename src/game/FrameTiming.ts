@@ -100,6 +100,13 @@ export class FramePacer {
   private displayCallbackStride: number | null = null;
   private displayCallbackPhase = 0;
 
+  /** Diagnostic view only; reading it must never advance or reset the pacer. */
+  get expectedFrameIntervalMs(): number {
+    return this.displayCallbackStride !== null && this.displayCallbackMs !== null
+      ? this.displayCallbackStride * this.displayCallbackMs
+      : 1_000 / (this.targetFrameRate ?? idleFrameRate);
+  }
+
   reset(): void {
     this.targetFrameRate = null;
     this.deadlineMs = 0;

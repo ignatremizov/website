@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { addCylinder } from "./scenePrimitives";
+import { addCylinder } from "./scenePrimitives.ts";
 import type { QualityTier } from "../world/WorldContracts";
 
 export interface RuneAltarMaterials {
@@ -27,6 +27,7 @@ type RuneAltarPhase =
 export class RuneAltar {
   readonly object = new THREE.Group();
 
+  private readonly hooks: RuneAltarHooks;
   private readonly rotor = new THREE.Group();
   private readonly crystal: THREE.Mesh<
     THREE.OctahedronGeometry,
@@ -75,11 +76,21 @@ export class RuneAltar {
   private age = 0;
   private duration = 1.5;
   private lightingEnabled = true;
+  private visualWarmupFrames = 2;
+  private readonly warmupVisuals: THREE.Mesh<
+    THREE.BufferGeometry,
+    THREE.MeshBasicMaterial
+  >[];
+  private readonly warmedVisuals: {
+    mesh: THREE.Mesh;
+    frustumCulled: boolean;
+  }[] = [];
 
   constructor(
     materials: RuneAltarMaterials,
-    private readonly hooks: RuneAltarHooks,
+    hooks: RuneAltarHooks,
   ) {
+    this.hooks = hooks;
     addCylinder(
       this.object,
       1.25,
@@ -246,19 +257,30 @@ export class RuneAltar {
       4.5,
       2,
     );
-    this.informationTargetLight.visible = false;
     this.object.add(this.informationTargetLight);
 
     this.light = new THREE.PointLight(materials.cyan.color, 0, 7.5, 2);
     this.light.position.y = 2;
     this.object.add(this.light);
+    this.warmupVisuals = [
+      this.beacon,
+      this.flare,
+      this.informationBeam,
+      this.informationCore,
+      this.informationPackets,
+      this.informationTargetFlare,
+    ];
   }
 
   setQuality(quality: QualityTier): void {
+    this.visualWarmupFrames = 2;
     this.lightingEnabled = quality !== "low";
     this.light.visible = this.lightingEnabled;
-    this.informationTargetLight.visible =
-      this.lightingEnabled && this.informationTargetFlare.visible;
+    // Light visibility determines NUM_POINT_LIGHTS, even at zero intensity.
+    // Adding the beam's target light at the flash recompiles the Falls' lit
+    // materials in that frame. Keep both slots stable for the quality tier;
+    // the animation owns intensity, never light registration.
+    this.informationTargetLight.visible = this.lightingEnabled;
     if (!this.lightingEnabled) {
       this.light.intensity = 0;
       this.informationTargetLight.intensity = 0;
@@ -301,6 +323,35 @@ export class RuneAltar {
   }
 
   update(delta: number, elapsed: number, reducedMotion: boolean): void {
+    for (const { mesh, frustumCulled } of this.warmedVisuals) {
+      mesh.visible = false;
+      mesh.frustumCulled = frustumCulled;
+    }
+    this.warmedVisuals.length = 0;
+    this.updateAnimation(delta, elapsed, reducedMotion);
+
+    if (this.visualWarmupFrames <= 0) return;
+    this.visualWarmupFrames -= 1;
+    // Submit the actual effect buffers during entry, not their first flash.
+    // Zero opacity/depthWrite and zero packet instances make these frames
+    // invisible while Three initializes programs and buffer bindings. Restore
+    // hidden-idle state before the next animation update, even if activated
+    // immediately after mounting or while changing quality.
+    for (const mesh of this.warmupVisuals) {
+      if (mesh.visible) continue;
+      this.warmedVisuals.push({ mesh, frustumCulled: mesh.frustumCulled });
+      mesh.frustumCulled = false;
+      mesh.visible = true;
+      mesh.material.opacity = 0;
+      if (mesh === this.informationPackets) this.informationPackets.count = 0;
+    }
+  }
+
+  private updateAnimation(
+    delta: number,
+    elapsed: number,
+    reducedMotion: boolean,
+  ): void {
     const motionScale = reducedMotion ? 0.22 : 1;
     if (this.phase === "idle") {
       this.updateIdle(delta, elapsed, motionScale);
@@ -585,7 +636,10 @@ export class RuneAltar {
     this.informationPackets.visible = true;
     this.informationPackets.material.opacity =
       active * (0.62 + surge * 0.3);
-    const packetCount = this.informationPackets.count;
+    // Entry warmup submits a zero-instance draw. Transmission restores the
+    // existing buffer's capacity before writing packets or calculating travel.
+    const packetCount = this.informationPackets.instanceMatrix.count;
+    this.informationPackets.count = packetCount;
     const travelSpeed = 0.72 + motionScale * 1.18;
     for (let index = 0; index < packetCount; index += 1) {
       const travel =
@@ -623,7 +677,6 @@ export class RuneAltar {
     this.informationTargetFlare.material.opacity =
       active * (0.08 + surge * 0.25);
 
-    this.informationTargetLight.visible = this.lightingEnabled;
     this.informationTargetLight.position.copy(
       this.informationReachedTargetLocal,
     );
@@ -641,7 +694,6 @@ export class RuneAltar {
     this.informationPackets.material.opacity = 0;
     this.informationTargetFlare.visible = false;
     this.informationTargetFlare.material.opacity = 0;
-    this.informationTargetLight.visible = false;
     this.informationTargetLight.intensity = 0;
   }
 }

@@ -18,13 +18,87 @@ npm run type-check
 npm run test:unit
 npm run check
 npm run build
+npm run check:build
 npm run preview
 ```
+
+`build` also checks compressed transfer budgets and emitted lazy-loading boundaries.
+The Pages workflow requires the deterministic unit suite before deployment. Tests
+use at most two workers; browser automation is not part of this workflow.
+
+For a preview independent of terminals and MCP, use the persistent
+[`website-preview-4173.service`](docs/preview-service.md). It serves the current
+production build on `127.0.0.1:4173`, starts with the user session, and writes logs
+to the journal. It does not install dependencies or rebuild during login.
+
+The complete portfolio remains readable when JavaScript is disabled or the shell
+cannot load. Successful startup enhances the same article into its modal presentation.
+If a lazy world module fails after deployment or a connection interruption, a notice
+offers an explicit refresh or the portfolio; it never automatically clears progress.
+
+### Navigation diagnostics
+
+`debug paths` and `debug top` retain their existing visual overlays. For an intermittent
+route or collision-recovery issue, use `debug trace on`, reproduce the movement, and
+run `debug trace export` to download `navigation-trace.json`. The record is off by
+default, capped at 128 events, and held only in memory. `debug trace` shows its status;
+`debug trace clear` clears events, and `debug trace off` stops recording. Nothing is
+uploaded or automatically persisted. This history supplements a recording; it is
+not a complete game replay.
+
+For occasional frame drops, run `debug perf 120`, play normally, and then
+`debug perf export`. The opt-in recorder stops automatically, retains bounded
+CPU/frame/callback timing and render/input context, and downloads
+`performance-trace.json` without storage writes or uploads. It distinguishes
+intentional idle pacing from candidate hitches, but does not measure GPU execution.
+See [frame-drop capture](docs/performance-capture.md) for controls and interpretation.
 
 ## Current vertical slice
 
 - Procedural Field Station hub and field-operator character.
 - Lightweight top-down collision, sprinting, jumping, respawn, and noclip.
+- Click or hold-drag to guide movement. Falls planning runs in bounded frame
+  slices, supports intermediate climbs through books, desks, pillars and the
+  waterfall crown, and snaps wall/rim targets to nearby clear footing. Safe
+  descents step off without a jump impulse; uphill gaps still use jumps, and
+  walkable stair treads stay walking routes. Tide stairs approach the river
+  through the dry bank instead of jumping over the first riser.
+  Authored connections speed up common portal/river/monument/cove journeys,
+  the reading-to-bridge walk, and both waterfall crown climbs; unusual
+  destinations retain the wider solver. A blue **Finding route** marker
+  stays at the clicked destination while searching, then turns amber for movement.
+  Blocked held-pointer samples preserve the accepted request. Failed searches
+  retain a red marker with a short reason until another request or cancellation.
+  Short stationary clicks commit a destination even after hold-steering starts;
+  deliberate holds and drags stop on release.
+  During a hold, the cyan cursor sigil follows the latest surface every rendered
+  frame while route submissions retain their 75 ms throttle. A small amber dot
+  shows the last published path endpoint when it differs from the cursor; it never
+  presents an unfinished request as a checked path.
+  Farther clicks in the same direction keep the checked walking prefix moving
+  while its replacement tail is planned and validated. Reached waypoints do not
+  insert idle frames; movement waits at the last checked point when necessary.
+  Hover feedback uses the active frame cadence while the mouse moves, coalescing
+  high-rate pointer events without delaying captured drags or ordinary clicks.
+  Pointerdown retains the accepted route until a destination is committed or
+  an object/puzzle interaction takes ownership, so separate clicks do not stop
+  movement before the controller can reuse the path.
+- Playable rims have a broken-bedrock band with chipped slabs, dark fissures, and
+  world-specific stone/metal colours, tied to the actual movement limit rather
+  than the larger decorative foundation. Water outlets stay open. The sleeping
+  Field turtle is an explicit jump destination beyond that rim: clicking approaches
+  the shore, lands on its near cap, and triggers its buckle/trampoline return.
+  Awakening it stops the automatic bucking; boarding the ride still uses interaction.
+- Optional navigation diagnostics: `debug paths [on|off]` in the terminal
+  toggles a depth-independent overlay (off by default). Cyan shows remaining
+  height-aware player waypoints and the target cross; amber shows
+  jump legs and landings, including later steps of a climb; green shows the
+  frog's current planned hop. A red
+  target cross means the host reported an unreachable route, not an inferred
+  rejection reason. Long walking routes display at most 256 remaining legs.
+  `debug top [on|off]` switches to a north-up overhead camera for inspecting
+  terrain gaps; combine it with either overlay and toggle it off to restore
+  the ordinary exploration camera.
 - Luminous Falls, Signal Grid, and Space Archive portal zones, plus the discoverable
   Mightymatica sub-dimension nested beneath Signal Grid.
 - Enterable/climbable survey tent, planning table, river rune monument, CRT banks,
@@ -34,11 +108,31 @@ npm run preview
 - A visibly parting waterfall ritual with three symbolic sockets, a mixed cache of
   draggable crystals and decoys, ordered moon/tide/ember activation, fragile faceted
   crystals whose shattered pieces remain telekinetic, an `R` repair loop, and a hidden
-  chest whose celebratory coin/light burst evolves Spark into Surge. Batched trees,
-  riverbank glow-bushes, larger soft fireflies, hanging vines, climbable cliff crowns,
-  and a marked ledge loop make the waterfall itself explorable vertically without
-  blocking the crystal-cache sightline. Surface-height collision preserves jump arcs
-  and a continuous contextual camera across both summit approaches.
+  chest whose celebratory coin/light burst evolves Spark into Surge. Falls now has
+  connected garden/shrine terraces, separate-height sockets, a raised stone bridge
+  with a river underpass, and two optional routes to the western waterfall crown.
+  The revealed cave has an elevated entrance reached across stepping stones and
+  a recessed, wadeable pool with submerged exit steps, spilling into the lower
+  river through a second cascade.
+  Intact crystals and decoys keep one physical body across dragging and release,
+  independent of decorative glow. They hover over low edges while carried, settle
+  onto the first real support when released, and retain partial-footprint support
+  at platform edges. Solid walls and bridge undersides still block their bodies.
+  Mist, broken foam streaks, and cyan/warm glimmers mark the water impacts and
+  the river's fading spill into the void. Tall rear pillars frame the workshop.
+  Purple trees, mineral clusters, ferns, vines, mushrooms, and terrace-height
+  fireflies frame an Archivist reading nook, a Keeper shrine, and a Tinkerer bench.
+  A jade crystal frog roams between clear terrace perches and flees approaching
+  players in quick hops, favoring new routes over a repeating patrol.
+  Catch it mid-hop with telekinesis for an indignant leg-flail; release it to
+  land, splash, and scramble away. A fling into the void ends in a glitch
+  dissolve and rematerialization on a clear perch.
+  Sockets hold one crystal at a time; crystals piled over an occupant must be
+  moved clear and returned before they can replace it.
+  Explicit small stair risers preserve the distinction between walking, jumping,
+  and passing underneath another route. See
+  [the terrain rebuild notes](docs/preproduction/falls-terrain-rebuild.md) for the
+  comparison checkpoint, offline Blender reference, and manual route.
 - A walk-on checksum Tower of Hanoi in the Signal Grid with three bronze,
   square-holed cash coins, step-climbable dynamic stacks, legal-move validation,
   carried-coin animation, completion-gated peg-tip balancing, a cyan BUFFER
@@ -157,7 +251,13 @@ Start with [the preproduction vision](docs/preproduction/vision.md),
 [vertical-slice acceptance criteria](docs/preproduction/vertical-slice.md). Image
 references and their review status are in [the concept pack](art/concepts/README.md).
 
-The Pages workflow builds and deploys the optimized Vite `dist/` artifact.
+The Pages workflow builds and deploys the optimized Vite `dist/` artifact, with
+the approved standalone [MightyMatica](https://github.com/ignatremizov/mightymatica)
+build composed at `/mightymatica/`. Its source revision is pinned in the workflow;
+an explicit manual-dispatch input can select another reviewed revision. The final
+combined-artifact gate checks both sites, native-only files and the Pages size
+limit. See [the alpha release notes](docs/alpha-release.md) for domain setup,
+verification and rollback.
 
 ## Ride music
 

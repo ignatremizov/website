@@ -5,6 +5,11 @@ on:
     branches:
       - gh-pages
   workflow_dispatch:
+    inputs:
+      mightymatica_ref:
+        description: "Optional MightyMatica commit/tag override; otherwise use the pinned alpha"
+        required: false
+        type: string
 
 permissions:
   actions: read
@@ -19,21 +24,53 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # Reviewed alpha; manual dispatch can explicitly select another revision.
+      MIGHTYMATICA_REF: 382efbdd72a6a62540abcaeadd662ec70113f2fd
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+
+      - name: Check out the approved MightyMatica release
+        uses: actions/checkout@v6
+        with:
+          repository: ignatremizov/mightymatica
+          ref: ${{ inputs.mightymatica_ref || env.MIGHTYMATICA_REF }}
+          path: .release/mightymatica
+          persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            .release/mightymatica/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Install MightyMatica dependencies
+        run: npm ci --prefix .release/mightymatica
+
+      - name: Verify gameplay and shell regression tests
+        run: npm run test:unit
+
+      - name: Verify MightyMatica
+        run: npm run check --prefix .release/mightymatica
+
       - name: Build production site
         run: npm run build
+
+      - name: Build MightyMatica
+        run: npm run build --prefix .release/mightymatica
+
+      - name: Compose the custom-domain site
+        run: npm run compose:portfolio --prefix .release/mightymatica -- "${{ github.workspace }}/dist"
+
+      - name: Check the complete Pages artifact
+        run: node scripts/check-pages-release.mjs
 
       - name: Configure Pages
         uses: actions/configure-pages@v6

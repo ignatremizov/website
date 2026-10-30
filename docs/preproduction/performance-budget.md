@@ -11,11 +11,25 @@
 | Void turtle ride media | external YouTube embed; requested only after mounting |
 | Void turtle ride FX | one instanced trail (12/18/24), one meteor line batch (3/5/6), one halo, four fin joints, six bounded loose asteroids |
 
+`npm run check:build` enforces the shell, first-playable JavaScript, and later
+Mightymatica transfer ceilings using the emitted Vite manifest. Text is measured
+with level-6 gzip; compressed images/media use their file sizes. Shared transitive
+dependencies are counted once and subtracted from later stages. The conservative
+shell total includes the social JPEG as well as the WebP preview; Mightymatica
+includes every preserved room-media file, including runtime-constructed URLs.
+These are build estimates, not measured HTTP transfers or frame timings.
+
+The same gate requires versioned lazy filenames and rejects Three.js/game/math in
+the eager shell or Mightymatica in the first-playable static dependency graph.
+`npm run build` runs this gate before updating measurements, and Pages deployment
+also requires the deterministic unit suite. The existing 650 kB minified chunk
+warning remains visible; it is distinct from the enforced compressed budgets.
+
 ## Runtime
 
 | Metric | Desktop high | Mobile low |
 | --- | --- | --- |
-| Frame target | display-aligned ≈60 active / 30 idle | 30 FPS |
+| Frame target | display-aligned ≈60 active / 30 idle | 30 FPS; ≈60 during pointer input |
 | Device pixel ratio cap | 1.5 | 1.0 |
 | Visible triangles | under 150k | under 70k |
 | Draw calls | under 75 | under 55 |
@@ -36,6 +50,10 @@
 - Pause rendering while the document is hidden.
 - Throttle to 30 FPS while idle. HTML overlays lock world input but retain the
   same adaptive idle/active rendering policy as the unobstructed world.
+- Coalesce idle mouse motion into one frame-owned picking pass. Hover motion,
+  not only dragging, promotes active cadence; a 150 ms input grace expires
+  without stationary frames extending it. Keep the Low tier's pixel ratio and
+  shadow settings unchanged during this promotion.
 - During active motion, measure browser display callbacks and render on the stable
   whole-callback stride nearest 60 FPS. This avoids periodic dropped callbacks on
   60.02 Hz panels and uneven alternating gaps on 75/90/100/144/165 Hz displays.
@@ -144,8 +162,11 @@
   Each active arrival may add only three transient line frames and one 16-fragment
   instanced scanline batch; all stay hidden while idle. Reduced motion skips those
   transients and settles the existing cube visuals through a short opacity/scale pass.
-- Pool the chest-open coin/light burst as one bounded particle or instance batch plus
-  one brief shadowless light, with no per-coin shadows, lights, or colliders.
+- Pool the chest-open coin burst as one bounded instance batch. Borrow the existing
+  ritual/tinkle light slot for its shadowless flash; opening/fading must not change
+  the visible point-light count. Keep inactive coins at count zero in the render
+  list so their material and instance buffer are prepared before interaction, with
+  no instanced draw while dormant. No per-coin shadows, lights, or colliders.
 - Render all interactive rune tinkles through one 36-point circular pool and one
   shared, brief shadowless light. All six cache candidates reuse one five-shard
   transform template, with facets and cores instanced per cluster plus one bounded
@@ -338,11 +359,22 @@
   fixed cut/seam helpers fade while the arrangement is disturbed.
 - Avoid per-frame allocations in movement and camera loops.
 - Keep click navigation event-driven. Sample hover projection at most once per
-  display frame, reuse one ray-hit array and analytic surface-plane scratch state,
-  and run A* only on click or after a genuinely stalled route. The destination
+  rendered frame (without an additional 30 Hz gate), coalesce native cursor probes
+  into the same pass, reuse its camera ray and canvas measurement, and retain
+  reusable ray-hit arrays and analytic surface-plane scratch state.
+  Use a construction-time per-batch bounds tree to reject distant static terrain;
+  preserve original hit order and the live-geometry fallback. Continue to
+  run A* only on click or after a genuinely stalled route. The destination
   sigil remains three draws: one ring, one center, and one four-instance tick batch.
+  Held input uses the same display-rate surface pick without increasing the 75 ms
+  route-submission rate or planning work budget. Its checked-endpoint dot adds one
+  small unlit draw only while it differs from the cursor; no dynamic label canvases.
   Elevated routes may append one ordinary physics jump but must not run a continuous
   parkour or navmesh search.
+- Query stable collider and landing-surface records through an insertion-ordered
+- Dress each finite world rim with one static vertex-coloured fractured-edge mesh,
+  bounded below 11,000 triangles, without additional lights, textures, colliders,
+  particle simulation, or per-frame rebuilding. Exclude it from navigation picking.
 - Query stable collider and landing-surface records through an insertion-ordered
   uniform grid. Keep moving rocks, scraps, turtle/Hanoi surfaces, and math props in a
   live mutable lane; removals and zone teardown must clear both the authoritative
@@ -355,22 +387,26 @@
 
 ## Vertical-slice measurement
 
-The production build records output file sizes. Browser verification checks desktop
-and 390px layouts, console errors, canvas dimensions, horizontal overflow, and
-resource transfer. `npm run build` rewrites the marked artifact-size block using
-level-6 gzip; runtime draw-call observations remain manual.
+The production build records output file sizes. Manual browser verification should
+check desktop and 390px layouts, console errors, canvas dimensions, horizontal
+overflow, and resource transfer. Browser automation requires an explicit request.
+`npm run build` rewrites the marked artifact-size block using level-6 gzip;
+runtime draw-call observations remain manual.
 
 Measured on the vertical slice:
 
 <!-- build-metrics:start -->
-- Shell JavaScript: 74.24 kB minified / 24.50 kB gzip.
-- Shell CSS: 85.32 kB minified / 19.27 kB gzip.
-- In-page hero: 252.69 kB WebP (the 528.42 kB JPEG remains social metadata only).
-- Lazy game code: 690.07 kB minified / 198.56 kB gzip.
-- Nested Mightymatica code: 187.10 kB minified / 56.08 kB gzip.
-- Lazy Three.js: 591.73 kB minified / 148.86 kB gzip.
-- First-playable JavaScript after the shell: about 347 kB gzip.
+- Shell JavaScript: 79.69 kB minified / 26.10 kB gzip.
+- Shell CSS: 86.00 kB minified / 19.42 kB gzip.
+- In-page hero: 252.69 kB WebP; stable social-preview JPEG: 123.38 kB (metadata only).
+- Lazy game code: 824.42 kB minified / 241.19 kB gzip.
+- Nested Mightymatica code: 183.86 kB minified / 55.50 kB gzip.
+- Lazy Three.js: 591.75 kB minified / 148.87 kB gzip.
+- First-playable JavaScript after the shell: about 390 kB gzip.
+- Conservative shell payload: 495.96 kB (includes referenced preview/social images).
+- Later Mightymatica payload: 363.40 kB, including all preserved room media.
 <!-- build-metrics:end -->
 - General-purpose WASM physics payload: zero; top-down collision is local game code.
-- Verified scenes: 43–72 calls across exploration positions, below the 75-call
-  desktop budget.
+- Historical vertical-slice observations: 43–72 calls across exploration positions,
+  below the 75-call desktop budget. These were not remeasured during the September 21
+  traversal/release-hardening pass.

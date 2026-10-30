@@ -12,13 +12,21 @@
 ## Loading
 
 The HTML shell and Quick Portfolio load first. The landing gate states that the world
-is an in-browser interactive 3D experience; Three.js and the small game module are
+is an in-browser interactive 3D experience; Three.js and the game module are
 pulled through a dynamic import only when the visitor activates that gate. Landing
 markup does not duplicate zone navigation owned by the in-world atlas.
 On narrow portrait screens, the idle shell uses a deliberately short scroll: the
 physical arch and centered gate occupy the opening view, while the identity panel and
 all three quick facts continue below it. Entering the world resets that scroll before
 the fixed-height canvas runtime starts.
+
+The complete portfolio is an ordinary `section` in the source HTML, with its
+stylesheet linked directly from the document. Both document and body permit
+scrolling before shell readiness. Only after shell setup succeeds does `main.ts`
+move the existing article into a native modal dialog and enable the game controls.
+Disabled JavaScript, an unavailable shell module, or failed initialization therefore
+leaves the same complete content readable through `#portfolio`, not an abbreviated
+duplicate biography. Failed enhancement restores the original section.
 
 The mobile terminal sizes itself from `VisualViewport` height and offset data, with
 `interactive-widget=resizes-content` as the browser-level preference. This keeps its
@@ -29,10 +37,13 @@ nodes once per animation frame, and retains at most 320 rendered lines.
 Mightymatica is a nested dynamic boundary inside the already-lazy game. Its module is
 prefetched during the Grid cube's reconstruction boot or loaded immediately before an
 explicit terminal alias or discovered atlas teleport. The initial Field/Falls/Grid/
-Archive game chunk does not include the exhibit implementation. The two lazy entry
-chunks use stable `PortfolioGame.js` and `MightymaticaZone.js` filenames so rebuilding
-the preview while a tab remains open cannot strand that tab with a stale hashed import;
-other assets retain content hashes.
+Archive game chunk does not include the exhibit implementation. All JavaScript chunks,
+including both lazy entries, use content-hashed filenames so distinct builds cannot
+silently share a module URL. Old tabs can still request assets removed by deployment.
+The shell handles `vite:preloadError` with an explicit refresh/portfolio/dismiss dialog,
+without suppressing the rejected import or bypassing the existing cleanup paths.
+There is no automatic reload or storage reset. The notice distinguishes saved
+progress/preferences from temporary scene state that restarts on refresh.
 
 ## Modules
 
@@ -157,7 +168,27 @@ privacy-restricted storage access remains handled consistently.
 The player uses a 2D circle collider against simple world boxes, with subdivided
 movement to prevent tunneling and axis-separated resolution for wall sliding. Noclip
 bypasses collision correction but preserves world bounds. A general 3D physics/WASM
-runtime is intentionally unnecessary for the flat top-down world.
+runtime is intentionally unnecessary for this height-aware top-down world.
+
+`JumpMotion` supplies exact ballistic displacement and velocity to both the player
+and jump-clearance prediction. Incremental motion composes across 30/60 FPS and
+uneven frames rather than losing jump height through velocity-first Euler updates.
+Guided horizontal movement is capped at the planned endpoint during a jump, too;
+stopping several centimetres early or overshooting by one slow frame can miss a
+narrow landing. Existing swept landing and collision rules still decide support.
+
+Short upward jumps also have a bounded rise-first option. `findGuidedJumpDelay`
+prefers the original running arc; only if that fails, it checks rising in place
+to the destination height before translating at the normal sprint speed. The
+whole lift, horizontal arc, and first descending support must be clear, with
+enough remaining airtime to arrive before landing. The stationary phase uses
+the actual player radius rather than requiring unused lateral steering room;
+horizontal travel keeps its existing extra clearance. Neither gravity nor the
+jump impulse changes. The controller rechecks and stores the selected delay at
+takeoff, then derives the fraction of each frame available for horizontal motion
+from the already-integrated vertical velocity. It does not search again midair,
+teleport the player, or delay keyboard movement. Cancellation drops the profile
+with its owning route.
 
 Variable-height supports such as the tent canopy and stacked Hanoi coins resolve
 descent from signed clearance at both the previous and current horizontal positions.
@@ -166,6 +197,210 @@ detaches from the support and converts its elevation into world-space jump heigh
 slopes and stepped stacks cannot pull an airborne player downward. Collision-debug
 landing lattices sample the same `heightAt` functions instead of drawing misleading
 flat rectangles.
+
+Falls click navigation searches reachable support heights, including the distinct
+river and bridge levels. `GuidedWalkingRoute` supplies yielding walking searches
+and traces; `NavigationPlanning` owns request-local jobs and explicit walk/jump/drop legs.
+`NavigationController` owns accepted, pending, and deferred requests, failure caching,
+validation/publication, manual overrides, and both legacy and multi-leg followers.
+`PortfolioGame` retains picking, geometry, physical movement, camera, and composition;
+a reused read-only frame view and narrow host callbacks connect the two owners.
+The controller advances at most 2,048 work units toward a 2 ms deadline. Tracing,
+smoothing, retries, and intermediate-support checks all yield; a bounded
+jump/drop check can slightly exceed the deadline. A jump checks at most two
+arcs of up to 160 sample intervals each (running, then rise-first when eligible).
+A clear direct walk wins first,
+then a validated step-off descent, then a jump. `DropNavigation` checks the supported
+run-up, gravity-only descent, first landing, and headroom at both ends of the
+runtime's support-release delay range. Its bounded queries include the river bed;
+the follower supplies ordinary running input, never a jump impulse or position snap.
+Authored jump connections likewise resolve to a legal walk/drop before requiring
+a jump, and cache the resolved kind and cost for the current geometry revision.
+
+The fallback walking grid retains its start-aligned cells, but `WalkingGrid`
+inserts destination and clearance-offset coordinates from at most 24 nearby,
+vertically relevant solids. This prevents a narrow ground passage (such as the
+rear-pillar/terrace lane) disappearing between grid columns for some starting
+positions. Added intervals use their actual distance as search cost; all edges
+still trace live support height and full body clearance. Coordinate hints are
+request-local, and do not change colliders, boundary limits, or route work budgets.
+
+`NavigationTrace` is off by default and retains at most 128 immutable, session-only
+events in an in-memory ring. `debug trace on|off|clear|export` controls recording and
+an explicit JSON download. Events include request IDs, support heights, planning,
+publication, failure/cancellation reasons, jump takeoffs/landings, drop starts/landings, and successful
+collision-safe rollbacks. Disabled hot paths do not construct diagnostic records;
+there are no automatic storage writes, console logs, or uploads. This is a bounded
+diagnostic history, not a full deterministic replay or a saved game.
+
+`PerformanceMonitor` is a separate opt-in, timed CPU/frame recorder, composed by
+`PortfolioGame` and controlled through `debug perf` in the shell. It observes the
+existing animation loop, does not change pacing or gameplay, and keeps preallocated
+numeric frame/hitch buffers. `FramePacer.expectedFrameIntervalMs` exposes only the
+current display-aligned interval for diagnosis. Raw gaps retain the preceding
+frame's cost; hidden periods reset their baselines. Optional browser observers
+are feature-detected and sanitize entries to timing only. Captures stop after
+10–300 seconds, are never uploaded or persisted, and export only on request.
+Render-submission CPU measurements are not GPU timings. See
+[frame-drop capture](../performance-capture.md) for bounds, fields, and interpretation.
+
+Deterministic tests exercise both isolated request ownership and a headless
+planner/controller/player-collision replay. The latter executes the real movement
+and surface methods for narrow elevated landings and the river-to-stairs route;
+it does not construct a renderer. Visual feel and the historical western-waterfall
+warp still require manual playtesting.
+
+For common Falls travel, `zones/falls/FallsNavigationRoutes` authors directed
+connections through the portal approach, Tide stairs, monument, river underpass,
+and cove stones, as well as the reading/deck walk and both waterfall crown chains.
+Cove descents step off and land outside bridge headroom before walking underneath.
+The Tide connection goes through the dry bank (height 0), between the river bed
+(-0.16) and first tread (0.225); it does not reinterpret their combined 0.385 m
+rise as a legal stair step. Crown routes
+keep separate landing and takeoff corners when a neighboring riser needs a run-up;
+the western route uses the actual waterfall cap above the nominal first step.
+`NavigationRouteGraph` chooses among these connections by complete
+path distance plus a jump penalty. It checks each static edge lazily under the same
+work budget, retaining only completed checks. Start/goal connectors are bounded,
+height-aware, and live-validated on every request. The complete selected route is
+validated again before publication. `PortfolioGame` owns the graph instance for one
+geometry revision and drops it on zone teardown; speed commands also advance that
+revision because speed changes jump-arc clearance. No scene queries run in the
+graph constructor, and cached connectivity never bypasses live collision checks.
+
+An authored-graph miss retains the wider solver. After a useful walking-search
+prefix, a nearby jump-only prop or a bounded support graph can provide a climb;
+otherwise that same suspended walking search resumes.
+
+Long walking approaches may end in short jumps; the graph's ordinary edge-distance
+limit does not reject that composite route from the original start. Takeoff height
+comes from the completed walking trace, including stair-to-river descents. Up to
+eight goal-connected intermediate supports also check newly discovered walking
+parents for a two-jump continuation. Walking continues while the fallback graph
+advances, so useful late-discovered takeoffs can finish the job without exhausting
+the room. These checks yield under the same frame budget and retain the original
+walking parent chains.
+
+Support candidates cover centers, near-edge points, and corners of up to 24 nearby
+surfaces, plus nearby ground landings. Half-meter insets previously erased narrow
+exposed pillar caps and usable crown takeoffs. The graph permits up to eight
+separately validated jumps and retains the 256-expansion limit. Cheaper arrivals
+using fewer jumps dominate redundant visits to the same landing, keeping lower
+platform loops from exhausting that limit. Physical jump height/range is unchanged.
+Walking clearance honors a prop's authored `solidTop`, matching jump clearance;
+coarse decorative boxes above a supported top cannot masquerade as a ceiling.
+Jump validation also checks the first descending support crossing using the same
+height-crossing predicate as physical surface selection. An overlapping higher
+canopy can invalidate a lower planned landing even without a solid collider.
+The airborne support margin is independent of the player's currently active
+platform. Decks above the flight stay overhead; these checks never substitute
+the globally highest surface at an X/Z position.
+
+Held-pointer changes coalesce into the latest destination. A valid current route
+remains available while replacement planning runs; commit validation checks the
+current player position, supports, and a captured target. Sub-arrival pointer drift
+is compared with the checked endpoint, not the preceding pointer event. A completed
+validation may publish its checked snapshot while a nearby same-support destination
+remains deferred. That newer intent starts a background search on the next grounded
+update, avoiding an endless cycle of validation restarts without player movement.
+Nearby targets can reuse remaining legs with fresh walking and jump clearance.
+The pointerdown dispatcher does not cancel navigation merely to begin classifying
+a new click or hold. It retains accepted routes and pending jobs until release
+commits the replacement, or a mechanism, prop, puzzle, focus-reclaiming click, or
+empty pick takes ownership. A cancelled uncommitted replacement leaves the previous
+request intact. Headless integration tests cover the actual pointerdown/up dispatch,
+not only direct calls to the navigation controller.
+Farther, aligned clicks instead retain an already-checked walking prefix and plan
+from a stable anchor ahead. The prefix remains in motion during both planning and
+validation; publication prepends only its unconsumed waypoints to the checked tail.
+It never commits an old jump on behalf of the new destination. The follower waits
+at the anchor if the tail is not ready; reversal, cancellation, and geometry changes
+discard the continuation. Reached walking waypoints advance within a bounded loop
+in the same frame, without cutting their corners or inserting a stopped frame.
+Cancellation and manual input clear pending and deferred intent; zone, geometry,
+and jump-speed changes invalidate work. Jump legs retain their takeoff and landing until real
+physics confirms arrival and support settling. Smoothed walking legs reach each
+waypoint before turning: early corner cutting can touch a second stair riser before
+the sequential-axis movement solver acquires the first. Live connectors and wider
+searches remain request-local; only the authored graph's static edges are cached.
+Transient blocked or cached-rejected held samples keep the last accepted target
+and pending job. Target records are cloned at request boundaries so subsequent
+pointer picks cannot mutate the geometry being validated.
+
+Pointer steering activates after 160 ms, but a stationary release through 350 ms
+still commits a one-shot destination. Elapsed time does not count as pointer
+movement: real drags use the existing mouse/touch displacement thresholds.
+Deliberate holds and drags stop on release; focus-only presses and cancellation
+never commit a destination.
+
+For one-shot clicks, the committed pending destination owns a blue segmented marker and a camera-facing
+“Finding route” label until planning finishes. Moving the mouse elsewhere or
+leaving the canvas does not hide a one-shot request. A replacement request displays
+its destination while an older checked route can continue moving. Publication
+switches to the active marker; cancellation clears pending and deferred feedback.
+Failed requests instead retain a separate red marker with a short reason:
+“No route found”, “Landing blocked”, “Landing changed”, or “Route stopped”.
+Hover changes and pointer leave cannot erase that feedback; an accepted request,
+publication, or explicit cancellation clears it. Status messages are deduplicated
+and rate-limited. All label textures are generated once, and reduced motion uses
+a steady static sigil.
+
+Held steering separates display intent from route ownership. A reused `visualTarget`
+is picked once per rendered frame after the camera moves; it never aliases the
+accepted target, a pending job, or published waypoints. The ring follows that local
+pick (red for a locally blocked landing), while route submissions keep their 75 ms
+throttle and the planner's existing work budget. A small, depth-tested amber dot
+shows only the published route's endpoint, not a pending request. It is hidden when
+the points coincide or the hold ends. A ray miss hides the cursor ring without
+cancelling the last safe route. Ordinary one-shot planning/failure labels are unchanged.
+
+`WorldBounds` shares the ordinary 0.55 m player-centre inset between endpoint clamps,
+containment, and `WorldEdge` scenery. A numerical epsilon keeps radially clamped
+points selectable; it does not expand movement. Exact clear legacy walks bypass
+grid quantization, so a rim goal is not rejected merely because its rounded grid
+cell lies outside the disk. `WorldEdge` dresses the otherwise misleading outer
+foundation in one static mesh of chipped slabs and exposed fissures. Geometry begins
+at that inset, with a narrow irregular transition, world-specific vertex colours,
+and no new collision, lights, textures, or picking barriers. Falls water outlets are
+excluded. Normal scene teardown owns the geometry and material.
+
+`ClickNavigationTarget` projects visible rim hits inside physical movement bounds
+and searches a bounded local neighborhood for clear footing on the selected support.
+Obstacle-face projections allow targets to slide along walls; deterministic tie
+handling prevents radial candidates from flipping across the same wall.
+Wall fallback compares cleared ground with up to six nearest support footprints,
+ranking final positions from one fixed click anchor. A physical box containing the
+visible hit may stabilize a faceted wall's depth and exclude landings through its
+back. Custom-shaped solids keep their rendered hit. The visible hit's height remains
+the ceiling, so fallback cannot select a deck above it. Direct top hits and portals
+retain their own selection paths. Idle pointer events retain only the newest sample;
+the native cursor affordance and destination marker are picked once after camera
+movement. Recent mouse motion uses the active display-aligned cadence on every
+quality tier, with a 150 ms grace period before returning to idle. There is no
+second 30 Hz marker timer. A stationary pointer/view does not repeat the projection.
+Within that synchronous feedback pass, repeated queries for the same pointer share
+one canvas measurement and camera ray; the cache cannot survive an input event or
+camera update. Captured drags and click/hold classification remain immediate.
+Prop picking reuses one hit buffer and associates hits directly with their owner,
+without temporary filter/map lists or recursive ownership searches. `debug paths`
+observes route legs without running searches; `debug top` provides a north-up view.
+
+Frog and intact ritual-crystal bodies register a fixed, feet-origin envelope on
+`Kickable`; that same body is used during grabs, release, and loose physics. Named
+and decoy clusters both use their 0.64 m radius and 2.15 m height, not an AABB of
+their aura, ground glow, breathing instances, or temporary restoration scale.
+`DragSurfaceProjection` changes support depth gradually along the current pointer
+ray; automatic height correction is excluded from fling velocity. Fixed bodies
+are carried 0.62 m above projected support to clear low parapets, while swept
+collision still blocks solid walls and overhead decks. The placement/shadow cue
+cannot claim a projected upper deck while the resolved body remains underneath.
+Stable release requires actual support contact and clear placement; an airborne
+gentle release falls under gravity, without an invented upward bounce. Cancelled
+captures discard fling velocity. Old platform ownership is cleared at grab time.
+Released fixed bodies use their base footprint for both swept landing and retained
+support, so an overhanging edge cannot catch the held body and then become a hole
+on release. Crystal shadows use that same footprint. Player step/landing rules,
+navigation, and the frog's existing body dimensions remain independent.
 
 ## Interaction and progression state
 
@@ -201,12 +436,18 @@ flat rectangles.
   lazy Math readiness, departure/veil timing, and final zone build. The actual pencil
   is temporarily reparented from its satchel loop to the drawing hand and restored
   before active-zone disposal.
-- The river monument owns an explicit idle → opening → holding → closing lifecycle.
+- The river monument owns an explicit idle → opening → transmitting → holding →
+  closing lifecycle.
   Its portfolio request moves it into a sustained active hold; the HTML dialog's
   native `close` event notifies the current game instance to begin the visual
   wind-down. Directly opened portfolio dialogs are harmless because an idle monument
   ignores that notification. The hold remains at the normal overlay frame cadence;
-  only opening and closing request the higher animation cadence.
+  opening, transmission, and closing request the higher animation cadence. Both altar
+  point-light slots remain registered throughout Medium/High and hidden throughout
+  Low; animation changes intensity only, avoiding a scene-wide light-count shader
+  change at the flash. Two invisible entry submissions warm the actual effect meshes,
+  with zero packet instances, before transmission restores the packet-buffer capacity.
+  The shell separately prepares the portfolio's layout and portrait before reveal.
 - Compass ownership is session state, separate from the active zone. Before collection
   the planning-table compass exists in the world and the HUD compass is hidden; a
   successful pickup disables its kickable state, reparents that same object to the
@@ -223,8 +464,15 @@ flat rectangles.
   takes over. Recollection reverses that transition. Zone disposal must not revoke or
   dispose a worn compass, but a fresh page load must. Loose recovery restores a world
   transform without silently granting the HUD.
-- The turtle's automatic shell bounce is eligible only for player contact over the
-  void. Riding is a separate, mutually exclusive state entered by explicit interaction
+- The registered Field turtle shell is the only click-landing exception outside the
+  ordinary rim; neither bare void nor another surface with the same ID gains access.
+  Far-side picks snap to its station-facing cap. Ground routing reaches a precise
+  island takeoff before the final jump, which waits for the bobbing shell's arc
+  clearance (bounded to four seconds for a permanently obstructed departure).
+  Sleeping-shell contact bucks the player back with the existing trampoline impulse
+  and clears the old route/hold instead of steering into another failed landing.
+  An awakened shell accepts standing and walking without clamping its supported
+  player onto the island. Riding remains a separate state entered by explicit interaction
   after Thunder; normal movement and further bounce handling remain suspended until a
   safe dismount. The ride state machine is parked → departing → cruising → returning →
   dismounting. Departure expands into the outer orbit once rather than dipping back to
@@ -306,6 +554,19 @@ flat rectangles.
   fill so dark batches and the avatar stay readable. Returning to medium/high
   invalidates lit materials once and refreshes the correctly sized cached shadow map.
 - Static geometry and monitor traces are batched by material.
+  `StaticBatchRaycast` builds a small bounding-volume tree over the merged mesh's
+  per-piece bounds once at zone construction. Cursor rays reject whole distant
+  branches rather than scanning every part. Candidate parts retain original
+  triangle order for equal-distance hits. Its CPU-only buffer view
+  shares the batch's attributes and never changes the rendered draw range. Changed
+  geometry, including Event Horizon deformation, falls back to ordinary raycasting.
+- The chest reward borrows existing Falls light slot zero, temporarily taking
+  priority over crystal ambience and tinkles; it never adds/removes a visible
+  point light. The light returns to normal ownership without retaining the flash
+  intensity. Reduced motion uses a steady fading glow instead of a flicker.
+  Coins stay registered as a zero-count instanced mesh while inactive, warming
+  the material and buffers before opening without issuing an instanced draw.
+  Opening changes only existing counts, transforms, and light uniforms.
 - Falls trunks, crowns, bushes, vines, parkour supports, and route marks remain static
   and enter the existing material batches; quality selects bounded object counts when
   the zone is built.
@@ -317,16 +578,32 @@ flat rectangles.
   win the landing frame without broadening the resting footprint.
 - Portal cores and glyphs use translucent double-sided materials and stable transparent
   ordering so neither approach direction loses the surface or symbol.
-- Player visibility uses a dedicated camera-to-avatar ray against a deliberately tiny
-  registry of meaningful occluders. Opaque climbable visuals register alongside their
+- Player visibility samples camera-to-avatar rays against registered occluders.
+  `VisibleOccluders` resolves overlapping assembly/child registrations through ancestor
+  lookups, updates each required transform once, and excludes hidden subtrees before
+  raycasting. Opaque climbable visuals register alongside their
   collision record; waterfall sheets, Pythagoras, and complete Signal Grid rack groups
   opt in explicitly, while transparent climbables such as the star atlas opt out.
-  Occlusion suppresses the ground blob and enables geometry-following rim replicas
-  with one shared depth-tested shader material; it never traverses the full scene.
+  Occlusion enables geometry-following rim replicas with one shared depth-tested
+  shader material; the ground shadow keeps its own depth test. Only the registered
+  subtrees and required ancestors are visited.
   The Archive heliograph collector and its transparent shafts share the avatar's late
   render layer. The avatar writes depth before the glass is composited, so apparent
   front-to-back ordering stays stable when the occlusion reveal pass switches on.
   The collector dish also retains the dedicated pointer layer for direct activation.
+- Falls foam and ground-glow planes use single-pass transparent rendering. Settled
+  socket-root transforms and frozen firefly buffers remain untouched until their
+  growth or quality state changes. Frog terrain routes persist across zone visits,
+  while each selected hop still checks current scenery and NPC clearance; blocked
+  weighted candidates are removed and retried within that decision.
+- The Falls frog exposes one borrowed `Kickable`. Its controller owns roaming and
+  held animation; shared pointer projection/capture and released-prop physics stay
+  in `PortfolioGame`. A fixed feet-origin collision envelope keeps flailing limbs
+  from shifting its physical floor or cursor projection. A supported release
+  reconnects from the actual landing through freshly checked hop arcs. Void or
+  stranded recovery dissolves before choosing a currently clear respawn perch.
+  `GlitchFragments` owns the bounded fragment effect shared with Mightymatica's
+  falling solids; Falls never imports an exhibit through this dependency.
 - Mightymatica owns its textures and frame update through an isolated runtime that is
   disposed before the shared zone group. The 512-cell Sierpiński floor, at-most
   4,096-cell whole-subcarpet corner patch, at-most 720 Buffon needles, and five

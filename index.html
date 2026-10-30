@@ -7,6 +7,7 @@
       content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <meta name="theme-color" content="#06090b" />
+    <link rel="stylesheet" href="/src/styles.css" />
     <meta
       name="description"
       content="Ignat Remizov is a CTO, systems builder, and creative technologist. Explore an interactive Three.js portfolio under strange skies or open the complete quick portfolio."
@@ -18,7 +19,14 @@
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://ignatremizov.com/" />
-    <meta property="og:image" content="./images/field-arch-hero.jpg" />
+    <meta property="og:image" content="https://ignatremizov.com/assets/social/portfolio.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="511" />
+    <meta property="og:image:alt" content="A stone arch overlooking a flower-filled coastal field beneath a starry sky." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://ignatremizov.com/assets/social/portfolio.jpg" />
+    <meta name="twitter:image:alt" content="A stone arch overlooking a flower-filled coastal field beneath a starry sky." />
     <link rel="canonical" href="https://ignatremizov.com/" />
     <link rel="icon" type="image/png" sizes="64x64" href="./images/favicon-64.png" />
     <link rel="preload" as="image" type="image/webp" href="./images/field-arch-hero.webp" />
@@ -98,8 +106,6 @@
               href="#portfolio"
               data-action="portfolio"
               aria-label="Open quick portfolio"
-              aria-haspopup="dialog"
-              aria-controls="portfolio"
             >
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <rect x="3" y="5" width="18" height="14" rx="2" />
@@ -129,8 +135,6 @@
                 class="button button-secondary"
                 href="#portfolio"
                 data-action="portfolio"
-                aria-haspopup="dialog"
-                aria-controls="portfolio"
               >
                 Open quick portfolio
               </a>
@@ -141,7 +145,7 @@
               <span><small>Domains</small> payments · risk · cloud</span>
             </div>
             <p id="entry-status" class="entry-status" aria-live="polite">
-              The interactive Three.js world loads here. No install or page change.
+              The complete portfolio is available below. The interactive world is optional.
             </p>
           </section>
 
@@ -376,7 +380,7 @@
       </section>
     </main>
 
-    <dialog id="portfolio" class="panel-dialog portfolio-dialog" aria-labelledby="portfolio-heading">
+    <section id="portfolio" class="panel-dialog portfolio-dialog portfolio-document" aria-labelledby="portfolio-heading">
       <article>
         <button
           class="close-button portfolio-close-button"
@@ -547,6 +551,7 @@
                   <li>Turned lessons into interactive diagrams, animations, and small games, then helped tutor students who were struggling with the material.</li>
                   <li>At Fuzz Productions, contributed to 3+ iOS projects and set up Jenkins build-and-test automation that removed hours of manual App Store deployment work.</li>
                 </ul>
+                <p><a href="./mightymatica/">Open MightyMatica — my father’s mathematics collection, restored for today’s browsers.</a></p>
               </div>
             </article>
           </div>
@@ -584,7 +589,7 @@
           </span>
         </footer>
       </article>
-    </dialog>
+    </section>
 
     <dialog
       id="field-menu-dialog"
@@ -1044,13 +1049,20 @@
       </article>
     </dialog>
 
-    <noscript>
-      <section class="noscript">
-        <h1>Ignat Remizov</h1>
-        <p>CTO, systems builder, and creative technologist based in Limassol, Cyprus.</p>
-        <p><a href="mailto:ignat@ignatremizov.com">Email</a> · <a href="https://github.com/ignatremizov">GitHub</a></p>
-      </section>
-    </noscript>
+    <dialog id="build-recovery" class="panel-dialog load-recovery-dialog"
+      aria-labelledby="build-recovery-heading" aria-describedby="build-recovery-description">
+      <article>
+        <button class="close-button" type="button" data-close="recovery" aria-label="Dismiss loading notice">×</button>
+        <h2 id="build-recovery-heading">A world file could not load.</h2>
+        <p id="build-recovery-description">Your connection may be offline, or this tab may refer to an older build. You can still read the complete portfolio.</p>
+        <p>Refreshing does not clear saved progress or preferences. Temporary positions and loose objects will restart.</p>
+        <div class="load-recovery-actions">
+          <button id="build-recovery-refresh" class="button button-primary" type="button">Refresh page</button>
+          <a class="button button-secondary" href="#portfolio" data-action="portfolio">Open portfolio</a>
+          <button class="button button-secondary" type="button" data-close="recovery">Not now</button>
+        </div>
+      </article>
+    </dialog>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

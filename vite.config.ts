@@ -9,6 +9,7 @@ export default defineConfig({
     ],
   },
   build: {
+    manifest: true,
     target: "es2022",
     sourcemap: false,
     assetsInlineLimit: 2048,
@@ -21,11 +22,7 @@ export default defineConfig({
           if (moduleId.includes("/node_modules/three/")) return "three";
           return undefined;
         },
-        chunkFileNames: (chunk) =>
-          chunk.name === "PortfolioGame" ||
-          chunk.name === "MightymaticaZone"
-            ? "assets/[name].js"
-            : "assets/[name]-[hash].js",
+        chunkFileNames: "assets/[name]-[hash].js",
       },
     },
   },
