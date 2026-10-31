@@ -1,11 +1,12 @@
 import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { measureBuild } from "./check-build.mjs";
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const assetsDirectory = join(projectRoot, "dist", "assets");
+const outputDirectory = resolve(process.argv[2] ?? join(projectRoot, "dist"));
+const assetsDirectory = join(outputDirectory, "assets");
 const budgetPath = join(projectRoot, "docs", "preproduction", "performance-budget.md");
 const startMarker = "<!-- build-metrics:start -->";
 const endMarker = "<!-- build-metrics:end -->";
@@ -16,7 +17,7 @@ function findAsset(label, pattern) {
   const matches = assetNames.filter((name) => pattern.test(name));
   if (matches.length !== 1) {
     throw new Error(
-      `Expected exactly one ${label} artifact in dist/assets, found ${matches.length}: ${matches.join(", ") || "none"}`,
+      `Expected exactly one ${label} artifact in ${assetsDirectory}, found ${matches.length}: ${matches.join(", ") || "none"}`,
     );
   }
   return join(assetsDirectory, matches[0]);
@@ -67,7 +68,7 @@ const [
 const kilobytes = (bytes) => (bytes / 1000).toFixed(2);
 const artifactLine = (label, measurement) =>
   `- ${label}: ${kilobytes(measurement.bytes)} kB minified / ${kilobytes(measurement.gzipBytes)} kB gzip.`;
-const buildMeasurements = await measureBuild(join(projectRoot, "dist"));
+const buildMeasurements = await measureBuild(outputDirectory);
 const firstPlayableGzip = Math.round(buildMeasurements.firstPlayableJsGzipBytes / 1000);
 
 const generatedBlock = [
@@ -97,5 +98,5 @@ if (updatedBudget === budget) {
   console.log("Performance budget metrics are already current.");
 } else {
   await writeFile(budgetPath, updatedBudget);
-  console.log("Updated docs/preproduction/performance-budget.md from dist artifacts.");
+  console.log(`Updated docs/preproduction/performance-budget.md from ${outputDirectory}.`);
 }

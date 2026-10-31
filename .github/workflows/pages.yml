@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       mightymatica_ref:
-        description: "Optional MightyMatica commit/tag override; otherwise use the pinned alpha"
+        description: "Optional MightyMatica commit/tag override; otherwise use the pinned release"
         required: false
         type: string
 
@@ -25,8 +25,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      # Reviewed alpha; manual dispatch can explicitly select another revision.
-      MIGHTYMATICA_REF: 382efbdd72a6a62540abcaeadd662ec70113f2fd
+      # Reviewed pre-release; manual dispatch can explicitly select another revision.
+      MIGHTYMATICA_REF: c7ceefe17544e8a33b031493abe290b6732d5470
     steps:
       - name: Check out repository
         uses: actions/checkout@v6

@@ -111,3 +111,36 @@ The combined validation on 2026-10-30 subsequently passed:
 The existing preview processes were not restarted. No browser automation,
 interactive checks, commit, push, deployment, or remote configuration changes
 were performed. The manual acceptance and publishing gates above remain open.
+
+## Update preparation, 2026-10-31
+
+The owner authorized committing and publishing the current portfolio and
+MightyMatica updates. The portfolio remains alpha; the restoration is
+beta/pre-release. The workflow pins the reviewed restoration commit rather than
+following its moving branch.
+The approved restoration revision is
+`c7ceefe17544e8a33b031493abe290b6732d5470`.
+
+The portfolio dependency update includes Vite 8.2.4 and its locked toolchain
+patches. TypeScript verification and all 252 tests passed; the complete
+dependency audit reported zero known vulnerabilities. An isolated production
+build passed the loading and transfer gates and regenerated the performance
+budget without replacing the running local preview:
+
+```sh
+npm exec -- vite build --outDir .cache/release-20261031/dist
+node scripts/check-build.mjs .cache/release-20261031/dist
+node scripts/update-performance-budget.mjs .cache/release-20261031/dist
+```
+
+After composing MightyMatica, the combined artifact passed its native-only
+release gate at 795,990,276 bytes. The restoration passed its own TypeScript
+verification, 266 tests with one intentional opt-in skip, production checks and
+dependency audit. Its corresponding-source archive was refreshed and verified.
+These checks do not claim browser, audio or visual acceptance.
+
+The existing custom domain and HTTPS certificate are healthy; no DNS changes
+are required for this update. Public-host byte checks follow the deployment.
+The previous portfolio revision
+`26d149013e77cea246cd7eef3e5853e2e850cc6c` and restoration revision
+`382efbdd72a6a62540abcaeadd662ec70113f2fd` remain rollback targets.

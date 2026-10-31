@@ -396,15 +396,15 @@ runtime draw-call observations remain manual.
 Measured on the vertical slice:
 
 <!-- build-metrics:start -->
-- Shell JavaScript: 79.69 kB minified / 26.10 kB gzip.
+- Shell JavaScript: 79.49 kB minified / 26.07 kB gzip.
 - Shell CSS: 86.00 kB minified / 19.42 kB gzip.
 - In-page hero: 252.69 kB WebP; stable social-preview JPEG: 123.38 kB (metadata only).
-- Lazy game code: 824.42 kB minified / 241.19 kB gzip.
-- Nested Mightymatica code: 183.86 kB minified / 55.50 kB gzip.
-- Lazy Three.js: 591.75 kB minified / 148.87 kB gzip.
+- Lazy game code: 823.91 kB minified / 241.33 kB gzip.
+- Nested Mightymatica code: 183.66 kB minified / 55.49 kB gzip.
+- Lazy Three.js: 591.62 kB minified / 148.85 kB gzip.
 - First-playable JavaScript after the shell: about 390 kB gzip.
-- Conservative shell payload: 495.96 kB (includes referenced preview/social images).
-- Later Mightymatica payload: 363.40 kB, including all preserved room media.
+- Conservative shell payload: 495.92 kB (includes referenced preview/social images).
+- Later Mightymatica payload: 363.39 kB, including all preserved room media.
 <!-- build-metrics:end -->
 - General-purpose WASM physics payload: zero; top-down collision is local game code.
 - Historical vertical-slice observations: 43–72 calls across exploration positions,
